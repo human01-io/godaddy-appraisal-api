@@ -150,6 +150,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 }
 .badge-available{background:rgba(52,211,153,0.1);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
 .badge-taken{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
+.badge-aftermarket{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)}
 .badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
 .govalue-label{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px}
 .govalue-amount{
@@ -182,6 +183,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 .tld-price{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--text2);margin-bottom:4px}
 .tld-status{font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
 .tld-status.available{color:var(--green)}
+.tld-status.aftermarket{color:#fbbf24}
 .tld-status.taken{color:var(--red)}
 .sales-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:40px}
 .sale-card{
@@ -327,6 +329,8 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     if(d.availability){
       if(d.availability.available){
         h+='<div class="badge badge-available"><span class="badge-dot"></span>Available</div>';
+      }else if(d.availability.buyable){
+        h+='<div class="badge badge-aftermarket"><span class="badge-dot"></span>Aftermarket</div>';
       }else{
         h+='<div class="badge badge-taken"><span class="badge-dot"></span>Taken</div>';
       }
@@ -361,7 +365,9 @@ header{padding:32px 0 20px;display:flex;align-items:center}
         h+='<div class="tld-card'+(ip?' priority':'')+'">';
         h+='<div class="tld-domain">'+esc(t.domain)+(ip?' <span class="priority-star">&#9733;</span>':'')+'</div>';
         if(t.price_display)h+='<div class="tld-price">'+esc(t.price_display)+'</div>';
-        h+='<div class="tld-status '+(t.available?'available':'taken')+'">'+(t.available?'Available':'Taken')+'</div>';
+        var st=t.available?'available':(t.buyable?'aftermarket':'taken');
+        var sl=t.available?'Available':(t.buyable?'Aftermarket':'Taken');
+        h+='<div class="tld-status '+st+'">'+sl+'</div>';
         h+='</div>';
       });
       h+='</div></div>';
@@ -717,7 +723,9 @@ async function fetchAppraisal(
     if (searchExact?.Products?.[0]) {
       const p = searchExact.Products[0];
       result.availability = {
-        available: p.Buyable !== false,
+        available: p.Available === true,
+        buyable: p.Buyable === true,
+        purchase_type: p.PurchaseType ?? null,
         tld: p.Tld,
         price: p.PriceInfo?.CurrentPrice ?? null,
         price_display: p.PriceInfo?.CurrentPriceDisplay ?? null,
@@ -757,7 +765,9 @@ async function fetchAppraisal(
         const mapped = allProducts.map((p: any) => ({
           domain: `${sld}.${p.Tld}`,
           tld: p.Tld,
-          available: p.Buyable !== false,
+          available: p.Available === true,
+          buyable: p.Buyable === true,
+          purchase_type: p.PurchaseType ?? null,
           price: p.PriceInfo?.CurrentPrice ?? null,
           price_display: p.PriceInfo?.CurrentPriceDisplay ?? null,
           list_price: p.PriceInfo?.ListPrice ?? null,

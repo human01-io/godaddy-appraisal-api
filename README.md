@@ -1,4 +1,4 @@
-# GoDaddy Domain Appraisal API
+# GoGreedy
 
 A Cloudflare Worker that wraps GoDaddy's internal domain appraisal engine, returning estimated values, comparable sales, domain availability, and alternative TLD suggestions — all via a simple REST API.
 

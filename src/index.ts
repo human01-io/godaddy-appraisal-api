@@ -35,7 +35,7 @@ const HTML_UI = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Domain Appraisal</title>
+<title>GoGreedy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -216,7 +216,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 <body>
 <div id="app">
   <header>
-    <div class="logo">DOMAIN APPRAISAL <span>API</span></div>
+    <div class="logo">GOGREEDY <span>API</span></div>
   </header>
 
   <h2 class="hero-text" id="heroText">Discover the value<br>of any domain</h2>
@@ -698,7 +698,9 @@ async function fetchAppraisal(
           );
           pSettled.forEach(function(r) {
             if (r.status === "fulfilled" && r.value && r.value.Products && r.value.Products.length > 0) {
-              results.priority.push(r.value.Products[0]);
+              var prod = r.value.Products[0];
+              if (r.value.ExactMatchDomain) prod._emd = r.value.ExactMatchDomain;
+              results.priority.push(prod);
             }
           });
         }
@@ -716,19 +718,23 @@ async function fetchAppraisal(
     // Build enriched result
     const result: any = { ...apiData.body, market: marketKey, currency: mkt.currency };
 
+    // Use ExactMatchDomain from the exact endpoint for definitive availability
+    const emd = searchExact?.ExactMatchDomain;
     if (searchExact?.Products?.[0]) {
       const p = searchExact.Products[0];
-      // A domain is available if it has no existing registration
-      // GoDaddy returns Buyable=true even for registered domains (aftermarket),
-      // so we check: if price is a standard registration price AND no premium indicators
-      const isAvailable = p.Available === true || (p.Buyable === true && !p.IsPremiumTier);
+      // ExactMatchDomain.IsAvailable is the authoritative field
+      // Fallback: ProductId > 0 and non-empty CurrentPriceDisplay means available
+      const isAvailable = emd
+        ? emd.IsAvailable === true
+        : (p.ProductId > 0 && !!p.PriceInfo?.CurrentPriceDisplay);
       result.availability = {
         available: isAvailable,
         tld: p.Tld,
-        price: p.PriceInfo?.CurrentPrice ?? null,
-        price_display: p.PriceInfo?.CurrentPriceDisplay ?? null,
-        list_price: p.PriceInfo?.ListPrice ?? null,
-        renewal_price: p.PriceInfo?.RenewalPrice ?? null,
+        price: p.PriceInfo?.CurrentPrice || null,
+        price_display: p.PriceInfo?.CurrentPriceDisplay || null,
+        list_price: p.PriceInfo?.ListPrice || null,
+        is_promo: p.PriceInfo?.IsPromoDiscount ?? false,
+        icann_fee: p.HasIcannFee ?? false,
       };
     }
 
@@ -759,14 +765,21 @@ async function fetchAppraisal(
       }
 
       if (allProducts.length) {
-        const mapped = allProducts.map((p: any) => ({
-          domain: `${sld}.${p.Tld}`,
-          tld: p.Tld,
-          available: p.Available === true || (p.Buyable === true && !p.IsPremiumTier),
-          price: p.PriceInfo?.CurrentPrice ?? null,
-          price_display: p.PriceInfo?.CurrentPriceDisplay ?? null,
-          list_price: p.PriceInfo?.ListPrice ?? null,
-        }));
+        const mapped = allProducts.map((p: any) => {
+          // Priority TLD exact calls have _emd (ExactMatchDomain) attached
+          // Spins Products: available if ProductId > 0 and has a real price display
+          const available = p._emd
+            ? p._emd.IsAvailable === true
+            : (p.ProductId > 0 && !!p.PriceInfo?.CurrentPriceDisplay);
+          return {
+            domain: `${sld}.${p.Tld}`,
+            tld: p.Tld,
+            available,
+            price: p.PriceInfo?.CurrentPrice || null,
+            price_display: p.PriceInfo?.CurrentPriceDisplay || null,
+            list_price: p.PriceInfo?.ListPrice || null,
+          };
+        });
 
         // Sort: priority TLDs first (in order), then the rest
         mapped.sort((a: any, b: any) => {

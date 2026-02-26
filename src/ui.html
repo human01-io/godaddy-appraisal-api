@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoGreedy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0a12;--bg2:#111119;--bg3:#191924;--border:#222233;
+  --text:#e8e8f0;--text2:#8888a0;--text3:#555568;
+  --accent:#10b981;--accent-bg:rgba(16,185,129,0.08);
+  --gold:#f59e0b;--gold-bg:rgba(245,158,11,0.08);
+  --indigo:#818cf8;--indigo-bg:rgba(129,140,248,0.08);
+  --red:#f87171;--green:#34d399;
+}
+html{font-size:16px}
+body{
+  font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);
+  min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+body::after{
+  content:'';position:fixed;top:-50%;left:-50%;right:-50%;bottom:-50%;
+  background:radial-gradient(ellipse at 50% 0%,rgba(99,102,241,0.07) 0%,transparent 60%),
+             radial-gradient(ellipse at 80% 50%,rgba(16,185,129,0.04) 0%,transparent 50%);
+  pointer-events:none;z-index:0;
+}
+#app{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:0 24px 60px}
+header{padding:32px 0 20px;display:flex;align-items:center}
+.logo{
+  font-size:0.78rem;font-weight:700;letter-spacing:0.12em;
+  color:var(--accent);text-transform:uppercase;
+}
+.logo span{color:var(--text3);font-weight:400;margin-left:4px}
+
+/* Two-column layout */
+.layout{display:grid;grid-template-columns:1fr 380px;gap:24px;align-items:start}
+.col-main{min-width:0}
+.col-history{min-width:0;position:sticky;top:24px}
+
+.hero-text{
+  font-size:2.2rem;font-weight:800;line-height:1.15;
+  letter-spacing:-0.03em;margin:20px 0 28px;
+  background:linear-gradient(135deg,var(--text) 0%,var(--text2) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.search-form{margin-bottom:8px}
+.search-wrapper{
+  display:flex;gap:8px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:16px;padding:6px;transition:border-color 0.3s,box-shadow 0.3s;
+}
+.search-wrapper:focus-within{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-bg),0 8px 32px rgba(0,0,0,0.3);
+}
+.search-wrapper input{
+  flex:1;min-width:0;background:none;border:none;color:var(--text);
+  font-family:'JetBrains Mono',monospace;font-size:1.05rem;
+  padding:12px 16px;outline:none;
+}
+.search-wrapper input::placeholder{color:var(--text3)}
+.search-wrapper select{
+  background:var(--bg3);border:1px solid var(--border);border-radius:10px;
+  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
+  padding:8px 12px;cursor:pointer;outline:none;appearance:none;-webkit-appearance:none;
+}
+.search-wrapper button{
+  background:var(--accent);border:none;border-radius:10px;color:#000;
+  font-family:'Outfit',sans-serif;font-weight:600;font-size:0.9rem;
+  padding:12px 24px;cursor:pointer;display:flex;align-items:center;gap:6px;
+  transition:opacity 0.2s;white-space:nowrap;
+}
+.search-wrapper button:hover{opacity:0.85}
+.search-wrapper button:disabled{opacity:0.5;cursor:not-allowed}
+.search-wrapper button svg{width:16px;height:16px}
+.hidden{display:none!important}
+#loading{text-align:center;padding:80px 0}
+.loading-card{
+  display:inline-block;background:var(--bg2);border:1px solid var(--border);
+  border-radius:20px;padding:48px 64px;
+}
+.loading-spinner{
+  width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;margin:0 auto 24px;animation:spin 0.8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:1.1rem;font-weight:500;margin-bottom:8px}
+.loading-text span{font-family:'JetBrains Mono',monospace;color:var(--accent)}
+.loading-sub{color:var(--text3);font-size:0.85rem;margin-bottom:24px}
+.progress-bar{
+  width:220px;height:3px;background:var(--bg3);border-radius:2px;
+  margin:0 auto 12px;overflow:hidden;
+}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width 0.4s linear}
+.elapsed{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text3)}
+.error-card{
+  max-width:420px;margin:60px auto;background:var(--bg2);
+  border:1px solid rgba(248,113,113,0.2);border-radius:16px;padding:40px;text-align:center;
+}
+.error-icon{
+  width:48px;height:48px;line-height:48px;border-radius:50%;
+  background:rgba(248,113,113,0.1);color:var(--red);
+  font-size:1.4rem;font-weight:700;margin:0 auto 16px;
+}
+.error-text{color:var(--text2);margin-bottom:24px;font-size:0.95rem;word-break:break-word}
+.error-card button{
+  background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
+  padding:10px 20px;cursor:pointer;transition:border-color 0.2s;
+}
+.error-card button:hover{border-color:var(--text3)}
+.result-hero{
+  background:var(--bg2);border:1px solid var(--border);border-radius:20px;
+  padding:32px;margin-top:24px;margin-bottom:20px;
+}
+.result-hero-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:12px;flex-wrap:wrap}
+.result-domain{font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:600}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:100px;
+  font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
+}
+.badge-available{background:rgba(52,211,153,0.1);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
+.badge-taken{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
+.badge-aftermarket{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.govalue-label{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px}
+.govalue-amount{
+  font-family:'JetBrains Mono',monospace;font-size:2.8rem;font-weight:700;
+  color:var(--gold);line-height:1;
+}
+.govalue-reg{font-family:'JetBrains Mono',monospace;font-size:0.9rem;color:var(--text2);margin-top:10px}
+.reasons{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+.reason-tag{
+  display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;
+  background:var(--bg3);border:1px solid var(--border);font-size:0.8rem;color:var(--text2);
+}
+.reason-tag .ri{font-size:0.7rem;opacity:0.6}
+.section-title{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px}
+.tld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;margin-bottom:20px}
+.tld-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:14px;transition:border-color 0.2s,transform 0.2s;cursor:default;
+}
+.tld-card:hover{transform:translateY(-2px);border-color:var(--text3)}
+.tld-card.priority{border-color:rgba(129,140,248,0.3);background:var(--indigo-bg)}
+.tld-card.priority:hover{border-color:var(--indigo)}
+.tld-domain{
+  font-family:'JetBrains Mono',monospace;font-size:0.85rem;font-weight:500;
+  margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.tld-card.priority .tld-domain{color:var(--indigo)}
+.priority-star{font-size:0.6rem;color:var(--indigo)}
+.tld-price{font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--text2);margin-bottom:4px}
+.tld-status{font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
+.tld-status.available{color:var(--green)}
+.tld-status.aftermarket{color:#fbbf24}
+.tld-status.taken{color:var(--red)}
+.sales-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:24px}
+.sale-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:12px 14px;display:flex;justify-content:space-between;align-items:center;
+}
+.sale-domain{font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--text)}
+.sale-info{text-align:right}
+.sale-price{font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:var(--gold);font-weight:500}
+.sale-year{font-size:0.68rem;color:var(--text3)}
+.footer{text-align:center;padding:40px 0 20px;color:var(--text3);font-size:0.75rem}
+.footer a{color:var(--text2);text-decoration:none}
+.footer a:hover{color:var(--accent)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.anim{animation:fadeUp 0.5s ease-out both}
+
+/* History panel (right column) */
+.history-panel{
+  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
+  padding:20px;max-height:calc(100vh - 48px);overflow-y:auto;
+}
+.history-panel::-webkit-scrollbar{width:4px}
+.history-panel::-webkit-scrollbar-track{background:transparent}
+.history-panel::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.history-panel::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+.history-panel .section-title{margin-bottom:16px;position:sticky;top:0;background:var(--bg2);padding-bottom:8px;z-index:1}
+.history-empty{text-align:center;color:var(--text3);padding:40px 0;font-size:0.85rem}
+.h-card{
+  padding:12px;border-radius:10px;border:1px solid var(--border);
+  margin-bottom:8px;transition:border-color 0.2s;cursor:pointer;
+}
+.h-card:hover{border-color:var(--text3)}
+.h-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.h-card-domain{font-family:'JetBrains Mono',monospace;font-size:0.82rem;font-weight:500;color:var(--text)}
+.h-card-time{font-size:0.68rem;color:var(--text3)}
+.h-card-mid{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.h-card-govalue{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--gold);font-weight:600}
+.h-card-status{font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
+.h-card-status.avail{color:var(--green)}
+.h-card-status.taken{color:var(--red)}
+.h-card-price{font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--text2)}
+.h-card-alt{font-size:0.72rem;color:var(--text3)}
+.h-card-alt span{color:var(--indigo);font-family:'JetBrains Mono',monospace}
+.h-card-alts{display:none;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.h-card.expanded .h-card-alts{display:flex}
+.alt-chip{
+  display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:5px;
+  font-family:'JetBrains Mono',monospace;font-size:0.7rem;
+  background:var(--bg3);border:1px solid var(--border);
+}
+.alt-chip.avail{border-color:rgba(52,211,153,0.3);color:var(--green)}
+.alt-chip.taken{color:var(--text3)}
+.alt-chip .chip-price{color:var(--text2);font-size:0.65rem}
+
+@media(max-width:960px){
+  .layout{grid-template-columns:1fr;gap:32px}
+  .col-history{position:static}
+  .history-panel{max-height:none}
+}
+@media(max-width:640px){
+  .hero-text{font-size:1.7rem;margin:16px 0 20px}
+  .search-wrapper{flex-wrap:wrap}
+  .search-wrapper input{min-width:100%}
+  .search-wrapper select,.search-wrapper button{flex:1}
+  .govalue-amount{font-size:2.2rem}
+  .result-hero{padding:20px}
+  .tld-grid{grid-template-columns:repeat(2,1fr)}
+  .sales-grid{grid-template-columns:1fr}
+  .loading-card{padding:36px 28px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">GOGREEDY <span>API</span></div>
+  </header>
+
+  <div class="layout">
+    <div class="col-main">
+      <h2 class="hero-text" id="heroText">Discover the value<br>of any domain</h2>
+
+      <form id="searchForm" class="search-form">
+        <div class="search-wrapper">
+          <input id="domainInput" type="text" placeholder="example.com" autocomplete="off" spellcheck="false" required>
+          <select id="marketSelect"></select>
+          <button type="submit" id="submitBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            Appraise
+          </button>
+        </div>
+      </form>
+
+      <div id="loading" class="hidden">
+        <div class="loading-card">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">Analyzing <span id="loadingDomain"></span></div>
+          <div class="loading-sub">This typically takes 5-10 seconds</div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="elapsed" id="elapsed">0s</div>
+        </div>
+      </div>
+
+      <div id="error" class="hidden">
+        <div class="error-card">
+          <div class="error-icon">!</div>
+          <div class="error-text" id="errorText"></div>
+          <button onclick="document.getElementById('error').classList.add('hidden');document.getElementById('domainInput').focus()">Try Again</button>
+        </div>
+      </div>
+
+      <div id="results" class="hidden"></div>
+    </div>
+
+    <div class="col-history">
+      <div class="history-panel" id="historyPanel">
+        <div class="section-title">Recent Searches</div>
+        <div id="historyContent"><div class="history-empty">No searches yet</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">Powered by Cloudflare Workers + Browser Rendering</div>
+</div>
+
+<script>
+(function(){
+  var form=document.getElementById('searchForm');
+  var input=document.getElementById('domainInput');
+  var mktSel=document.getElementById('marketSelect');
+  var loadEl=document.getElementById('loading');
+  var resEl=document.getElementById('results');
+  var errEl=document.getElementById('error');
+  var btn=document.getElementById('submitBtn');
+  var timer=null;
+
+  var mkts=[
+    ['mx','MX - MXN'],['us','US - USD'],['uk','UK - GBP'],['ca','CA - CAD'],
+    ['au','AU - AUD'],['br','BR - BRL'],['de','DE - EUR'],['fr','FR - EUR'],
+    ['es','ES - EUR'],['it','IT - EUR'],['jp','JP - JPY'],['in','IN - INR'],
+    ['sg','SG - SGD'],['co','CO - COP'],['ar','AR - ARS'],['cl','CL - CLP']
+  ];
+  mkts.forEach(function(m){
+    var o=document.createElement('option');
+    o.value=m[0];o.textContent=m[1];
+    if(m[0]===(window.__DETECTED_MARKET||'mx'))o.selected=true;
+    mktSel.appendChild(o);
+  });
+
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    var d=input.value.trim().toLowerCase();
+    if(!d)return;
+    if(d.indexOf('.')===-1)d=d+'.com';
+    run(d,mktSel.value);
+  });
+
+  function run(domain,market){
+    errEl.classList.add('hidden');
+    resEl.classList.add('hidden');
+    loadEl.classList.remove('hidden');
+    btn.disabled=true;
+    document.getElementById('loadingDomain').textContent=domain;
+    var pf=document.getElementById('progressFill');
+    var el=document.getElementById('elapsed');
+    pf.style.width='0%';
+    var t0=Date.now();
+    clearInterval(timer);
+    timer=setInterval(function(){
+      var s=((Date.now()-t0)/1000)|0;
+      el.textContent=s+'s elapsed';
+      var pct=Math.min((Date.now()-t0)/12000*100,95);
+      pf.style.width=pct+'%';
+    },250);
+
+    fetch('/appraisal/'+encodeURIComponent(domain)+'?market='+market)
+      .then(function(r){return r.json()})
+      .then(function(data){
+        stop();
+        if(data.error){showErr(data.error)}
+        else{render(data);loadHistory()}
+      })
+      .catch(function(e){stop();showErr(e.message||'Network error')});
+  }
+
+  function stop(){clearInterval(timer);loadEl.classList.add('hidden');btn.disabled=false}
+  function showErr(msg){document.getElementById('errorText').textContent=msg;errEl.classList.remove('hidden')}
+
+  function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+  function fmtNum(n){return Number(n).toLocaleString()}
+
+  function render(d){
+    var pr=window.__PRIO_TLDS||['ai','io','dev','app','co'];
+    var h='';
+
+    h+='<div class="result-hero anim">';
+    h+='<div class="result-hero-top"><div class="result-domain">'+esc(d.domain)+'</div>';
+    if(d.availability){
+      if(d.availability.available){
+        h+='<div class="badge badge-available"><span class="badge-dot"></span>Available</div>';
+      }else{
+        h+='<div class="badge badge-taken"><span class="badge-dot"></span>Taken</div>';
+      }
+    }
+    h+='</div>';
+
+    h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
+    h+='<div class="govalue-amount" id="goval" data-v="'+(d.govalue||0)+'">$0</div>';
+
+    if(d.availability&&d.availability.price_display){
+      h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display)+'</div>';
+    }
+
+    if(d.reasons&&d.reasons.length){
+      h+='<div class="reasons">';
+      d.reasons.forEach(function(r){
+        h+='<div class="reason-tag"><span class="ri">'+rIcon(r.type)+'</span> '+esc(rText(r))+'</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+
+    if(d.alternative_tlds&&d.alternative_tlds.length){
+      h+='<div class="anim" style="animation-delay:0.1s">';
+      h+='<div class="section-title">Alternative TLDs</div><div class="tld-grid">';
+      d.alternative_tlds.forEach(function(t){
+        var ip=pr.indexOf(t.tld)!==-1;
+        h+='<div class="tld-card'+(ip?' priority':'')+'">';
+        h+='<div class="tld-domain">'+esc(t.domain)+(ip?' <span class="priority-star">&#9733;</span>':'')+'</div>';
+        if(t.price_display)h+='<div class="tld-price">'+esc(t.price_display)+'</div>';
+        h+='<div class="tld-status '+(t.available?'available':'taken')+'">'+(t.available?'Available':'Taken')+'</div>';
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+
+    if(d.comparable_sales&&d.comparable_sales.length){
+      h+='<div class="anim" style="animation-delay:0.2s">';
+      h+='<div class="section-title">Comparable Sales</div><div class="sales-grid">';
+      d.comparable_sales.forEach(function(s){
+        h+='<div class="sale-card"><div class="sale-domain">'+esc(s.domain)+'</div>';
+        h+='<div class="sale-info"><div class="sale-price">$'+fmtNum(s.price)+'</div>';
+        h+='<div class="sale-year">'+s.year+'</div></div></div>';
+      });
+      h+='</div></div>';
+    }
+
+    resEl.innerHTML=h;
+    resEl.classList.remove('hidden');
+    resEl.scrollIntoView({behavior:'smooth',block:'start'});
+
+    var gEl=document.getElementById('goval');
+    if(gEl){countUp(gEl,0,parseInt(gEl.getAttribute('data-v'))||0,1200)}
+  }
+
+  function countUp(el,from,to,dur){
+    var t0=null;
+    function step(ts){
+      if(!t0)t0=ts;
+      var p=Math.min((ts-t0)/dur,1);
+      var e=1-Math.pow(1-p,3);
+      el.textContent='$'+Math.floor(from+(to-from)*e).toLocaleString();
+      if(p<1)requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function rText(r){
+    switch(r.type){
+      case 'memorable':return 'Memorable name';
+      case 'broad_appeal':return 'Broad commercial appeal';
+      case 'other_extension_sold_high':return esc(r.domain)+' sold for $'+fmtNum(r.price);
+      case 'great_extension':return 'Premium extension';
+      case 'short':return 'Short & concise';
+      case 'valuable_keyword':return '"'+r.keyword+'" keyword (avg $'+fmtNum(r.avg_sold_price)+')';
+      case 'popular_keyword':return '"'+r.keyword+'" is popular';
+      default:return r.type.replace(/_/g,' ');
+    }
+  }
+  function rIcon(t){
+    switch(t){
+      case 'memorable':return '&#9830;';case 'broad_appeal':return '&#9733;';
+      case 'other_extension_sold_high':return '&#36;';case 'great_extension':return '&#9733;';
+      case 'short':return '&#8596;';case 'valuable_keyword':return '&#9670;';
+      case 'popular_keyword':return '&#8593;';default:return '&#8226;';
+    }
+  }
+
+  function timeAgo(ts){
+    var d=new Date(ts+'Z');
+    var s=Math.floor((Date.now()-d.getTime())/1000);
+    if(s<60)return s+'s ago';
+    var m=Math.floor(s/60);if(m<60)return m+'m ago';
+    var h=Math.floor(m/60);if(h<24)return h+'h ago';
+    var dy=Math.floor(h/24);return dy+'d ago';
+  }
+
+  function loadHistory(){
+    fetch('/history?limit=50')
+      .then(function(r){return r.json()})
+      .then(function(rows){
+        var con=document.getElementById('historyContent');
+        if(!rows||!rows.length){con.innerHTML='<div class="history-empty">No searches yet</div>';return}
+        var h='';
+        rows.forEach(function(r,i){
+          var alts=null;
+          try{if(r.alts)alts=JSON.parse(r.alts)}catch(e){}
+          h+='<div class="h-card" onclick="this.classList.toggle(\'expanded\')">';
+          h+='<div class="h-card-top">';
+          h+='<div class="h-card-domain">'+esc(r.domain)+'</div>';
+          h+='<div class="h-card-time">'+timeAgo(r.searched_at)+'</div>';
+          h+='</div>';
+          h+='<div class="h-card-mid">';
+          if(r.govalue)h+='<div class="h-card-govalue">$'+fmtNum(r.govalue)+'</div>';
+          h+='<div class="h-card-status '+(r.available?'avail':'taken')+'">'+(r.available?'Available':'Taken')+'</div>';
+          if(r.price_display)h+='<div class="h-card-price">'+esc(r.price_display)+'</div>';
+          h+='</div>';
+          if(r.best_alt_tld){
+            h+='<div class="h-card-alt">Best alt: <span>'+esc(r.best_alt_tld)+'</span>';
+            if(r.best_alt_price)h+=' <span>'+esc(r.best_alt_price)+'</span>';
+            h+='</div>';
+          }
+          if(alts&&alts.length){
+            h+='<div class="h-card-alts">';
+            alts.forEach(function(a){
+              h+='<span class="alt-chip '+(a.a?'avail':'taken')+'">'+esc(a.d);
+              if(a.p)h+=' <span class="chip-price">'+esc(a.p)+'</span>';
+              h+='</span>';
+            });
+            h+='</div>';
+          }
+          h+='</div>';
+        });
+        con.innerHTML=h;
+      })
+      .catch(function(){});
+  }
+
+  loadHistory();
+  input.focus();
+})();
+</script>
+</body>
+</html>

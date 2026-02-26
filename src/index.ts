@@ -1,12 +1,31 @@
 import puppeteer, { Browser } from "@cloudflare/puppeteer";
+import HTML_UI from "./ui.html";
 
 interface Env {
   BROWSER: Fetcher;
   CACHE_TTL: string;
+  DB: D1Database;
 }
 
 // In-memory cache (per isolate, resets on cold start)
 const cache = new Map<string, { data: any; ts: number }>();
+
+// Cloudflare wholesale TLD pricing cache (USD, refreshed every 6 hours)
+let cfPrices: Record<string, { registration: number; renewal: number }> | null = null;
+let cfPricesFetchedAt = 0;
+const CF_PRICES_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+async function getCfPrices(): Promise<Record<string, { registration: number; renewal: number }>> {
+  if (cfPrices && Date.now() - cfPricesFetchedAt < CF_PRICES_TTL) return cfPrices;
+  try {
+    const res = await fetch("https://cfdomainpricing.com/prices.json");
+    if (res.ok) {
+      cfPrices = await res.json() as Record<string, { registration: number; renewal: number }>;
+      cfPricesFetchedAt = Date.now();
+    }
+  } catch { /* keep stale cache if fetch fails */ }
+  return cfPrices || {};
+}
 
 // Supported GoDaddy markets: subdomain, market cookie, currency
 const MARKETS: Record<string, { subdomain: string; market: string; currency: string }> = {
@@ -30,403 +49,87 @@ const MARKETS: Record<string, { subdomain: string; market: string; currency: str
 
 const DEFAULT_MARKET = "mx";
 
-const HTML_UI = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GoGreedy</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0a0a12;--bg2:#111119;--bg3:#191924;--border:#222233;
-  --text:#e8e8f0;--text2:#8888a0;--text3:#555568;
-  --accent:#10b981;--accent-bg:rgba(16,185,129,0.08);
-  --gold:#f59e0b;--gold-bg:rgba(245,158,11,0.08);
-  --indigo:#818cf8;--indigo-bg:rgba(129,140,248,0.08);
-  --red:#f87171;--green:#34d399;
-}
-html{font-size:16px}
-body{
-  font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);
-  min-height:100vh;-webkit-font-smoothing:antialiased;
-}
-body::after{
-  content:'';position:fixed;top:-50%;left:-50%;right:-50%;bottom:-50%;
-  background:radial-gradient(ellipse at 50% 0%,rgba(99,102,241,0.07) 0%,transparent 60%),
-             radial-gradient(ellipse at 80% 50%,rgba(16,185,129,0.04) 0%,transparent 50%);
-  pointer-events:none;z-index:0;
-}
-#app{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 24px 60px}
-header{padding:32px 0 20px;display:flex;align-items:center}
-.logo{
-  font-size:0.78rem;font-weight:700;letter-spacing:0.12em;
-  color:var(--accent);text-transform:uppercase;
-}
-.logo span{color:var(--text3);font-weight:400;margin-left:4px}
-.hero-text{
-  text-align:center;font-size:2.6rem;font-weight:800;line-height:1.15;
-  letter-spacing:-0.03em;margin:40px 0 36px;
-  background:linear-gradient(135deg,var(--text) 0%,var(--text2) 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-}
-.search-form{max-width:640px;margin:0 auto}
-.search-wrapper{
-  display:flex;gap:8px;background:var(--bg2);border:1px solid var(--border);
-  border-radius:16px;padding:6px;transition:border-color 0.3s,box-shadow 0.3s;
-}
-.search-wrapper:focus-within{
-  border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-bg),0 8px 32px rgba(0,0,0,0.3);
-}
-.search-wrapper input{
-  flex:1;min-width:0;background:none;border:none;color:var(--text);
-  font-family:'JetBrains Mono',monospace;font-size:1.05rem;
-  padding:12px 16px;outline:none;
-}
-.search-wrapper input::placeholder{color:var(--text3)}
-.search-wrapper select{
-  background:var(--bg3);border:1px solid var(--border);border-radius:10px;
-  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
-  padding:8px 12px;cursor:pointer;outline:none;-webkit-appearance:none;
-}
-.search-wrapper button{
-  background:var(--accent);border:none;border-radius:10px;color:#000;
-  font-family:'Outfit',sans-serif;font-weight:600;font-size:0.9rem;
-  padding:12px 24px;cursor:pointer;display:flex;align-items:center;gap:6px;
-  transition:opacity 0.2s;white-space:nowrap;
-}
-.search-wrapper button:hover{opacity:0.85}
-.search-wrapper button:disabled{opacity:0.5;cursor:not-allowed}
-.search-wrapper button svg{width:16px;height:16px}
-.hidden{display:none!important}
-#loading{text-align:center;padding:80px 0}
-.loading-card{
-  display:inline-block;background:var(--bg2);border:1px solid var(--border);
-  border-radius:20px;padding:48px 64px;
-}
-.loading-spinner{
-  width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);
-  border-radius:50%;margin:0 auto 24px;animation:spin 0.8s linear infinite;
-}
-@keyframes spin{to{transform:rotate(360deg)}}
-.loading-text{font-size:1.1rem;font-weight:500;margin-bottom:8px}
-.loading-text span{font-family:'JetBrains Mono',monospace;color:var(--accent)}
-.loading-sub{color:var(--text3);font-size:0.85rem;margin-bottom:24px}
-.progress-bar{
-  width:220px;height:3px;background:var(--bg3);border-radius:2px;
-  margin:0 auto 12px;overflow:hidden;
-}
-.progress-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width 0.4s linear}
-.elapsed{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text3)}
-.error-card{
-  max-width:420px;margin:60px auto;background:var(--bg2);
-  border:1px solid rgba(248,113,113,0.2);border-radius:16px;padding:40px;text-align:center;
-}
-.error-icon{
-  width:48px;height:48px;line-height:48px;border-radius:50%;
-  background:rgba(248,113,113,0.1);color:var(--red);
-  font-size:1.4rem;font-weight:700;margin:0 auto 16px;
-}
-.error-text{color:var(--text2);margin-bottom:24px;font-size:0.95rem;word-break:break-word}
-.error-card button{
-  background:var(--bg3);border:1px solid var(--border);border-radius:8px;
-  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
-  padding:10px 20px;cursor:pointer;transition:border-color 0.2s;
-}
-.error-card button:hover{border-color:var(--text3)}
-.result-hero{
-  background:var(--bg2);border:1px solid var(--border);border-radius:20px;
-  padding:40px;margin-top:48px;margin-bottom:24px;
-}
-.result-hero-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;gap:12px;flex-wrap:wrap}
-.result-domain{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:600}
-.badge{
-  display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:100px;
-  font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
-}
-.badge-available{background:rgba(52,211,153,0.1);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
-.badge-taken{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
-.badge-aftermarket{background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)}
-.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-.govalue-label{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px}
-.govalue-amount{
-  font-family:'JetBrains Mono',monospace;font-size:3.2rem;font-weight:700;
-  color:var(--gold);line-height:1;
-}
-.govalue-reg{font-family:'JetBrains Mono',monospace;font-size:0.9rem;color:var(--text2);margin-top:10px}
-.govalue-reg s{color:var(--text3);margin-left:8px;font-size:0.85rem}
-.govalue-reg.premium-price{color:#fbbf24;font-size:1.1rem;font-weight:600}
-.reasons{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px;padding-top:24px;border-top:1px solid var(--border)}
-.reason-tag{
-  display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;
-  background:var(--bg3);border:1px solid var(--border);font-size:0.8rem;color:var(--text2);
-}
-.reason-tag .ri{font-size:0.7rem;opacity:0.6}
-.section-title{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:16px}
-.tld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;margin-bottom:24px}
-.tld-card{
-  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
-  padding:16px;transition:border-color 0.2s,transform 0.2s;cursor:default;
-}
-.tld-card:hover{transform:translateY(-2px);border-color:var(--text3)}
-.tld-card.priority{border-color:rgba(129,140,248,0.3);background:var(--indigo-bg)}
-.tld-card.priority:hover{border-color:var(--indigo)}
-.tld-domain{
-  font-family:'JetBrains Mono',monospace;font-size:0.88rem;font-weight:500;
-  margin-bottom:8px;display:flex;align-items:center;gap:6px;
-}
-.tld-card.priority .tld-domain{color:var(--indigo)}
-.priority-star{font-size:0.6rem;color:var(--indigo)}
-.tld-price{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--text2);margin-bottom:4px}
-.tld-status{font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
-.tld-status.available{color:var(--green)}
-.tld-status.aftermarket{color:#fbbf24}
-.tld-status.taken{color:var(--red)}
-.sales-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:40px}
-.sale-card{
-  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
-  padding:14px 16px;display:flex;justify-content:space-between;align-items:center;
-}
-.sale-domain{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text)}
-.sale-info{text-align:right}
-.sale-price{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--gold);font-weight:500}
-.sale-year{font-size:0.7rem;color:var(--text3)}
-.footer{text-align:center;padding:40px 0 20px;color:var(--text3);font-size:0.75rem}
-.footer a{color:var(--text2);text-decoration:none}
-.footer a:hover{color:var(--accent)}
-@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-.anim{animation:fadeUp 0.5s ease-out both}
-@media(max-width:640px){
-  .hero-text{font-size:1.7rem;margin:30px 0 28px}
-  .search-wrapper{flex-wrap:wrap}
-  .search-wrapper input{min-width:100%}
-  .search-wrapper select,.search-wrapper button{flex:1}
-  .govalue-amount{font-size:2.4rem}
-  .result-hero{padding:24px}
-  .tld-grid{grid-template-columns:repeat(2,1fr)}
-  .sales-grid{grid-template-columns:1fr}
-  .loading-card{padding:36px 28px}
-}
-</style>
-</head>
-<body>
-<div id="app">
-  <header>
-    <div class="logo">GOGREEDY <span>API</span></div>
-  </header>
+const BASE_PRIORITY_TLDS = ["ai", "io", "dev", "app", "co"];
 
-  <h2 class="hero-text" id="heroText">Discover the value<br>of any domain</h2>
+// ISO country code → market key
+const COUNTRY_TO_MARKET: Record<string, string> = {
+  US: "us", MX: "mx", GB: "uk", CA: "ca", AU: "au", IN: "in",
+  BR: "br", ES: "es", DE: "de", FR: "fr", IT: "it", JP: "jp",
+  SG: "sg", CO: "co", AR: "ar", CL: "cl",
+};
 
-  <form id="searchForm" class="search-form">
-    <div class="search-wrapper">
-      <input id="domainInput" type="text" placeholder="example.com" autocomplete="off" spellcheck="false" required>
-      <select id="marketSelect"></select>
-      <button type="submit" id="submitBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        Appraise
-      </button>
-    </div>
-  </form>
+// Market key → country TLD (null = don't add, e.g. "us" → no .us)
+function countryTldForMarket(market: string): string | null {
+  if (market === "us") return null;
+  return MARKETS[market] ? market : null;
+}
 
-  <div id="loading" class="hidden">
-    <div class="loading-card">
-      <div class="loading-spinner"></div>
-      <div class="loading-text">Analyzing <span id="loadingDomain"></span></div>
-      <div class="loading-sub">This typically takes 5-10 seconds</div>
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="elapsed" id="elapsed">0s</div>
-    </div>
-  </div>
+function priorityTldsForMarket(market: string): string[] {
+  const ctld = countryTldForMarket(market);
+  if (!ctld || BASE_PRIORITY_TLDS.includes(ctld)) return BASE_PRIORITY_TLDS;
+  return [...BASE_PRIORITY_TLDS, ctld];
+}
 
-  <div id="error" class="hidden">
-    <div class="error-card">
-      <div class="error-icon">!</div>
-      <div class="error-text" id="errorText"></div>
-      <button onclick="document.getElementById('error').classList.add('hidden');document.getElementById('domainInput').focus()">Try Again</button>
-    </div>
-  </div>
+// All alternative TLDs we check availability for
+const ALL_ALT_TLDS = [
+  "com", "net", "org", "ai", "io", "dev", "app", "co",
+  "xyz", "shop", "store", "tech", "online", "site", "info",
+  "biz", "me", "tv", "cc", "gg", "club", "world", "land", "so", "us",
+];
 
-  <div id="results" class="hidden"></div>
+// RDAP bootstrap cache: maps TLD → RDAP server URL
+let rdapBootstrap: Record<string, string> | null = null;
+let rdapBootstrapTs = 0;
 
-  <div class="footer">Powered by Cloudflare Workers + Browser Rendering</div>
-</div>
-
-<script>
-(function(){
-  var form=document.getElementById('searchForm');
-  var input=document.getElementById('domainInput');
-  var mktSel=document.getElementById('marketSelect');
-  var loadEl=document.getElementById('loading');
-  var resEl=document.getElementById('results');
-  var errEl=document.getElementById('error');
-  var btn=document.getElementById('submitBtn');
-  var timer=null;
-
-  var mkts=[
-    ['mx','MX - MXN'],['us','US - USD'],['uk','UK - GBP'],['ca','CA - CAD'],
-    ['au','AU - AUD'],['br','BR - BRL'],['de','DE - EUR'],['fr','FR - EUR'],
-    ['es','ES - EUR'],['it','IT - EUR'],['jp','JP - JPY'],['in','IN - INR'],
-    ['sg','SG - SGD'],['co','CO - COP'],['ar','AR - ARS'],['cl','CL - CLP']
-  ];
-  mkts.forEach(function(m){
-    var o=document.createElement('option');
-    o.value=m[0];o.textContent=m[1];
-    if(m[0]==='mx')o.selected=true;
-    mktSel.appendChild(o);
-  });
-
-  form.addEventListener('submit',function(e){
-    e.preventDefault();
-    var d=input.value.trim().toLowerCase();
-    if(!d)return;
-    if(d.indexOf('.')===-1)d=d+'.com';
-    run(d,mktSel.value);
-  });
-
-  function run(domain,market){
-    errEl.classList.add('hidden');
-    resEl.classList.add('hidden');
-    loadEl.classList.remove('hidden');
-    btn.disabled=true;
-    document.getElementById('loadingDomain').textContent=domain;
-    var pf=document.getElementById('progressFill');
-    var el=document.getElementById('elapsed');
-    pf.style.width='0%';
-    var t0=Date.now();
-    clearInterval(timer);
-    timer=setInterval(function(){
-      var s=((Date.now()-t0)/1000)|0;
-      el.textContent=s+'s elapsed';
-      var pct=Math.min((Date.now()-t0)/12000*100,95);
-      pf.style.width=pct+'%';
-    },250);
-
-    fetch('/appraisal/'+encodeURIComponent(domain)+'?market='+market)
-      .then(function(r){return r.json()})
-      .then(function(data){
-        stop();
-        if(data.error){showErr(data.error)}
-        else{render(data)}
-      })
-      .catch(function(e){stop();showErr(e.message||'Network error')});
+async function loadRdapBootstrap(): Promise<Record<string, string>> {
+  if (rdapBootstrap && Date.now() - rdapBootstrapTs < 86400000) {
+    return rdapBootstrap;
   }
-
-  function stop(){clearInterval(timer);loadEl.classList.add('hidden');btn.disabled=false}
-  function showErr(msg){document.getElementById('errorText').textContent=msg;errEl.classList.remove('hidden')}
-
-  function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
-  function fmtNum(n){return Number(n).toLocaleString()}
-
-  function render(d){
-    var pr=['mx','io','app','ai'];
-    var h='';
-
-    h+='<div class="result-hero anim">';
-    h+='<div class="result-hero-top"><div class="result-domain">'+esc(d.domain)+'</div>';
-    if(d.availability){
-      if(d.availability.available){
-        h+='<div class="badge badge-available"><span class="badge-dot"></span>Available</div>';
-      }else{
-        h+='<div class="badge badge-taken"><span class="badge-dot"></span>Taken</div>';
-      }
-    }
-    h+='</div>';
-
-    h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
-    h+='<div class="govalue-amount" id="goval" data-v="'+(d.govalue||0)+'">$0</div>';
-
-    if(d.availability&&d.availability.price_display){
-      h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display);
-      if(d.availability.list_price&&d.availability.list_price!==d.availability.price){
-        h+=' <s>'+esc(d.currency)+fmtNum(d.availability.list_price)+'</s>';
-      }
-      h+='</div>';
-    }
-
-    if(d.reasons&&d.reasons.length){
-      h+='<div class="reasons">';
-      d.reasons.forEach(function(r){
-        h+='<div class="reason-tag"><span class="ri">'+rIcon(r.type)+'</span> '+esc(rText(r))+'</div>';
-      });
-      h+='</div>';
-    }
-    h+='</div>';
-
-    if(d.alternative_tlds&&d.alternative_tlds.length){
-      h+='<div class="anim" style="animation-delay:0.1s">';
-      h+='<div class="section-title">Alternative TLDs</div><div class="tld-grid">';
-      d.alternative_tlds.forEach(function(t){
-        var ip=pr.indexOf(t.tld)!==-1;
-        h+='<div class="tld-card'+(ip?' priority':'')+'">';
-        h+='<div class="tld-domain">'+esc(t.domain)+(ip?' <span class="priority-star">&#9733;</span>':'')+'</div>';
-        if(t.price_display)h+='<div class="tld-price">'+esc(t.price_display)+'</div>';
-        h+='<div class="tld-status '+(t.available?'available':'taken')+'">'+(t.available?'Available':'Taken')+'</div>';
-        h+='</div>';
-      });
-      h+='</div></div>';
-    }
-
-    if(d.comparable_sales&&d.comparable_sales.length){
-      h+='<div class="anim" style="animation-delay:0.2s">';
-      h+='<div class="section-title">Comparable Sales</div><div class="sales-grid">';
-      d.comparable_sales.forEach(function(s){
-        h+='<div class="sale-card"><div class="sale-domain">'+esc(s.domain)+'</div>';
-        h+='<div class="sale-info"><div class="sale-price">$'+fmtNum(s.price)+'</div>';
-        h+='<div class="sale-year">'+s.year+'</div></div></div>';
-      });
-      h+='</div></div>';
-    }
-
-    resEl.innerHTML=h;
-    resEl.classList.remove('hidden');
-    resEl.scrollIntoView({behavior:'smooth',block:'start'});
-
-    var gEl=document.getElementById('goval');
-    if(gEl){countUp(gEl,0,parseInt(gEl.getAttribute('data-v'))||0,1200)}
-  }
-
-  function countUp(el,from,to,dur){
-    var t0=null;
-    function step(ts){
-      if(!t0)t0=ts;
-      var p=Math.min((ts-t0)/dur,1);
-      var e=1-Math.pow(1-p,3);
-      el.textContent='$'+Math.floor(from+(to-from)*e).toLocaleString();
-      if(p<1)requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
-  }
-
-  function rText(r){
-    switch(r.type){
-      case 'memorable':return 'Memorable name';
-      case 'broad_appeal':return 'Broad commercial appeal';
-      case 'other_extension_sold_high':return esc(r.domain)+' sold for $'+fmtNum(r.price);
-      case 'great_extension':return 'Premium extension';
-      case 'short':return 'Short & concise';
-      case 'valuable_keyword':return '"'+r.keyword+'" keyword (avg $'+fmtNum(r.avg_sold_price)+')';
-      case 'popular_keyword':return '"'+r.keyword+'" is popular';
-      default:return r.type.replace(/_/g,' ');
+  const resp = await fetch("https://data.iana.org/rdap/dns.json");
+  const data = await resp.json() as { services: [string[], string[]][] };
+  const map: Record<string, string> = {};
+  for (const [tlds, urls] of data.services) {
+    for (const tld of tlds) {
+      map[tld.toLowerCase()] = urls[0];
     }
   }
-  function rIcon(t){
-    switch(t){
-      case 'memorable':return '&#9830;';case 'broad_appeal':return '&#9733;';
-      case 'other_extension_sold_high':return '&#36;';case 'great_extension':return '&#9733;';
-      case 'short':return '&#8596;';case 'valuable_keyword':return '&#9670;';
-      case 'popular_keyword':return '&#8593;';default:return '&#8226;';
-    }
-  }
+  rdapBootstrap = map;
+  rdapBootstrapTs = Date.now();
+  return map;
+}
 
-  input.focus();
-})();
-</script>
-</body>
-</html>`;
+async function checkRdap(domain: string, bootstrap: Record<string, string>): Promise<boolean | null> {
+  const tld = domain.split(".").pop()?.toLowerCase();
+  if (!tld || !bootstrap[tld]) return null;
+  const url = bootstrap[tld].replace(/\/$/, "") + "/domain/" + domain;
+  try {
+    const resp = await fetch(url, {
+      headers: { Accept: "application/rdap+json" },
+      redirect: "follow",
+    });
+    if (resp.status === 200) return false; // exists = taken
+    if (resp.status === 404) return true;  // not found = available
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function checkAllRdap(
+  sld: string,
+  tlds: string[],
+): Promise<Record<string, boolean | null>> {
+  const bootstrap = await loadRdapBootstrap();
+  const results: Record<string, boolean | null> = {};
+  await Promise.allSettled(
+    tlds.map(async (tld) => {
+      const available = await checkRdap(`${sld}.${tld}`, bootstrap);
+      results[tld] = available;
+    }),
+  );
+  return results;
+}
+
 
 // Comprehensive stealth patches to bypass Akamai bot detection
 const STEALTH_SCRIPT = `
@@ -527,6 +230,11 @@ async function fetchAppraisal(
   domain: string,
   marketKey: string = DEFAULT_MARKET,
 ): Promise<any> {
+  const prioTlds = priorityTldsForMarket(marketKey);
+  const sld = domain.split(".")[0];
+  const queriedTld = domain.includes(".") ? domain.split(".").slice(1).join(".") : "";
+  const altTlds = [...new Set([...prioTlds, ...ALL_ALT_TLDS])].filter(t => t !== queriedTld);
+
   const cacheTtl = parseInt(env.CACHE_TTL || "3600");
   const cacheKey = `${domain}:${marketKey}`;
   const mkt = MARKETS[marketKey] || MARKETS[DEFAULT_MARKET];
@@ -536,6 +244,11 @@ async function fetchAppraisal(
   if (cached && Date.now() - cached.ts < cacheTtl * 1000) {
     return { ...cached.data, _cached: true };
   }
+
+  // Start RDAP availability checks (including main domain) + Cloudflare pricing fetch in parallel with browser
+  const allRdapTlds = queriedTld ? [queriedTld, ...altTlds] : altTlds;
+  const rdapPromise = checkAllRdap(sld, allRdapTlds);
+  const cfPricesPromise = getCfPrices();
 
   let browser: Browser | null = null;
 
@@ -650,13 +363,12 @@ async function fetchAppraisal(
       throw new Error(`GoDaddy returned ${apiData.status}`);
     }
 
-    // Appraisal succeeded — now fetch availability + alternative TLDs
-    // Use key=dpp (domain purchase page) which returns availability + premium/aftermarket data
+    // Appraisal succeeded — now fetch main domain availability via exact endpoint
     const searchResults = await page.evaluate(`
       (async () => {
         var domain = ${JSON.stringify(domain)};
         var host = window.location.origin;
-        var results = { exact: null, spins: null, priority: [], errors: [] };
+        var results = { exact: null, errors: [] };
 
         function doFetch(url) {
           return fetch(url, {
@@ -668,41 +380,10 @@ async function fetchAppraisal(
           });
         }
 
-        var h = host;
-        var sld = domain.split(".")[0];
-        var priorityTlds = ["mx", "io", "app", "ai"];
-
-        // Fire exact + spins in parallel
-        var settled = await Promise.allSettled([
-          doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(domain)),
-          doFetch(h + "/domainfind/v1/search/spins?key=appraisals_search&q=" + encodeURIComponent(domain) + "&pagesize=20&tlds=mx,io,app,ai,com,net,org,co,dev,xyz,shop,store")
-        ]);
-
-        if (settled[0].status === "fulfilled") results.exact = settled[0].value;
-        else results.errors.push("exact: " + settled[0].reason);
-        if (settled[1].status === "fulfilled") results.spins = settled[1].value;
-        else results.errors.push("spins: " + settled[1].reason);
-
-        // Find which priority TLDs are missing from spins, then fetch them in parallel
-        var spinsHasTld = {};
-        if (results.spins && results.spins.Products) {
-          results.spins.Products.forEach(function(p) { spinsHasTld[p.Tld] = true; });
-        }
-        var missingTlds = priorityTlds.filter(function(t) { return !spinsHasTld[t]; });
-
-        if (missingTlds.length > 0) {
-          var pSettled = await Promise.allSettled(
-            missingTlds.map(function(tld) {
-              return doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(sld + "." + tld));
-            })
-          );
-          pSettled.forEach(function(r) {
-            if (r.status === "fulfilled" && r.value && r.value.Products && r.value.Products.length > 0) {
-              var prod = r.value.Products[0];
-              if (r.value.ExactMatchDomain) prod._emd = r.value.ExactMatchDomain;
-              results.priority.push(prod);
-            }
-          });
+        try {
+          results.exact = await doFetch(host + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(domain));
+        } catch(e) {
+          results.errors.push("exact: " + e);
         }
 
         return results;
@@ -713,86 +394,64 @@ async function fetchAppraisal(
     await page.evaluate("window.stop()").catch(() => {});
 
     const searchExact = searchResults?.exact;
-    const searchSpins = searchResults?.spins;
 
     // Build enriched result
     const result: any = { ...apiData.body, market: marketKey, currency: mkt.currency };
 
-    // Use ExactMatchDomain from the exact endpoint for definitive availability
-    const emd = searchExact?.ExactMatchDomain;
-    if (searchExact?.Products?.[0]) {
-      const p = searchExact.Products[0];
-      // ExactMatchDomain.IsAvailable is the authoritative field
-      // Fallback: ProductId > 0 and non-empty CurrentPriceDisplay means available
-      const isAvailable = emd
-        ? emd.IsAvailable === true
-        : (p.ProductId > 0 && !!p.PriceInfo?.CurrentPriceDisplay);
+    // Wait for RDAP availability checks + CF pricing (started in parallel with browser)
+    const [rdapAvail, cfTldPrices] = await Promise.all([rdapPromise, cfPricesPromise]);
+
+    // Build main domain availability from RDAP + GoDaddy exact + Cloudflare pricing
+    {
+      const emd = searchExact?.ExactMatchDomain;
+      const p = searchExact?.Products?.[0];
+      // RDAP is authoritative for availability
+      const rdapMain = queriedTld ? rdapAvail[queriedTld] : null;
+      // Fallback chain: RDAP → ExactMatchDomain → ProductId heuristic
+      const isAvailable = rdapMain !== null
+        ? rdapMain === true
+        : emd
+          ? emd.IsAvailable === true
+          : (p ? (p.ProductId > 0 && !!p.PriceInfo?.CurrentPriceDisplay) : false);
+      const cfMain = queriedTld ? cfTldPrices[queriedTld] : null;
       result.availability = {
         available: isAvailable,
-        tld: p.Tld,
-        price: p.PriceInfo?.CurrentPrice || null,
-        price_display: p.PriceInfo?.CurrentPriceDisplay || null,
-        list_price: p.PriceInfo?.ListPrice || null,
-        is_promo: p.PriceInfo?.IsPromoDiscount ?? false,
-        icann_fee: p.HasIcannFee ?? false,
+        tld: queriedTld || (p?.Tld ?? null),
+        price: cfMain?.registration ?? null,
+        price_display: cfMain ? `$${cfMain.registration.toFixed(2)}` : null,
+        renewal_price: cfMain?.renewal ?? null,
       };
     }
 
+    // Build alternatives using Cloudflare wholesale pricing
     {
-      const sld = domain.split(".")[0];
-      const priorityTldOrder = ["mx", "io", "app", "ai"];
-      const seenTlds = new Set<string>();
-      const allProducts: any[] = [];
+      const mapped = altTlds.map((tld) => {
+        const rdap = rdapAvail[tld];
+        const cf = cfTldPrices[tld];
+        // RDAP is authoritative; if null (unknown TLD), fall back to unavailable
+        const available = rdap === true;
+        return {
+          domain: `${sld}.${tld}`,
+          tld,
+          available,
+          price: cf?.registration ?? null,
+          price_display: cf ? `$${cf.registration.toFixed(2)}` : null,
+          renewal_price: cf?.renewal ?? null,
+        };
+      });
 
-      // Add priority TLD results (from explicit exact lookups)
-      if (searchResults?.priority?.length) {
-        for (const p of searchResults.priority) {
-          if (!seenTlds.has(p.Tld)) {
-            allProducts.push(p);
-            seenTlds.add(p.Tld);
-          }
-        }
-      }
+      // Sort: priority TLDs first (in order), then the rest
+      const priorityTldOrder = prioTlds;
+      mapped.sort((a, b) => {
+        const aIdx = priorityTldOrder.indexOf(a.tld);
+        const bIdx = priorityTldOrder.indexOf(b.tld);
+        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+        if (aIdx !== -1) return -1;
+        if (bIdx !== -1) return 1;
+        return 0;
+      });
 
-      // Add spins results
-      if (searchSpins?.Products?.length) {
-        for (const p of searchSpins.Products) {
-          if (!seenTlds.has(p.Tld)) {
-            allProducts.push(p);
-            seenTlds.add(p.Tld);
-          }
-        }
-      }
-
-      if (allProducts.length) {
-        const mapped = allProducts.map((p: any) => {
-          // Priority TLD exact calls have _emd (ExactMatchDomain) attached
-          // Spins Products: available if ProductId > 0 and has a real price display
-          const available = p._emd
-            ? p._emd.IsAvailable === true
-            : (p.ProductId > 0 && !!p.PriceInfo?.CurrentPriceDisplay);
-          return {
-            domain: `${sld}.${p.Tld}`,
-            tld: p.Tld,
-            available,
-            price: p.PriceInfo?.CurrentPrice || null,
-            price_display: p.PriceInfo?.CurrentPriceDisplay || null,
-            list_price: p.PriceInfo?.ListPrice || null,
-          };
-        });
-
-        // Sort: priority TLDs first (in order), then the rest
-        mapped.sort((a: any, b: any) => {
-          const aIdx = priorityTldOrder.indexOf(a.tld);
-          const bIdx = priorityTldOrder.indexOf(b.tld);
-          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-          if (aIdx !== -1) return -1;
-          if (bIdx !== -1) return 1;
-          return 0;
-        });
-
-        result.alternative_tlds = mapped;
-      }
+      result.alternative_tlds = mapped;
     }
 
     cache.set(cacheKey, { data: result, ts: Date.now() });
@@ -805,7 +464,7 @@ async function fetchAppraisal(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -822,7 +481,12 @@ export default {
 
     // Serve UI
     if (path === "/") {
-      return new Response(HTML_UI, {
+      const cfCountry = (request.cf as any)?.country as string | undefined;
+      const detectedMarket = (cfCountry && COUNTRY_TO_MARKET[cfCountry]) || DEFAULT_MARKET;
+      const prioTlds = priorityTldsForMarket(detectedMarket);
+      const inject = `<script>window.__DETECTED_MARKET=${JSON.stringify(detectedMarket)};window.__PRIO_TLDS=${JSON.stringify(prioTlds)};</script>`;
+      const html = HTML_UI.replace("</head>", inject + "</head>");
+      return new Response(html, {
         headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders },
       });
     }
@@ -858,6 +522,30 @@ export default {
 
       try {
         const result = await fetchAppraisal(env, domain, market);
+        if (!result._cached) {
+          const bestAlt = result.alternative_tlds?.find((t: any) => t.available && t.price_display);
+          const altsJson = result.alternative_tlds?.length
+            ? JSON.stringify(result.alternative_tlds.map((t: any) => ({
+                d: t.domain, t: t.tld, a: t.available ? 1 : 0,
+                p: t.price_display || null,
+              })))
+            : null;
+          ctx.waitUntil(
+            env.DB.prepare(
+              `INSERT INTO searches (domain, govalue, available, price_display, market, currency, best_alt_tld, best_alt_price, alts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              result.domain,
+              result.govalue || null,
+              result.availability?.available ? 1 : 0,
+              result.availability?.price_display || null,
+              result.market,
+              result.currency,
+              bestAlt?.domain || null,
+              bestAlt?.price_display || null,
+              altsJson,
+            ).run().catch(() => {})
+          );
+        }
         return Response.json(result, { headers: corsHeaders });
       } catch (err: any) {
         return Response.json(
@@ -892,6 +580,15 @@ export default {
         }
       }
 
+      return Response.json(results, { headers: corsHeaders });
+    }
+
+    // Search history
+    if (path === "/history") {
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM searches ORDER BY searched_at DESC LIMIT ?`
+      ).bind(limit).all();
       return Response.json(results, { headers: corsHeaders });
     }
 

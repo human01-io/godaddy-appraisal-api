@@ -3,8 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "gogreedy.phantom.mx", custom_domain = true }
+]
+
 [browser]
 binding = "BROWSER"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gogreedy-history"
+database_id = "282a224a-0ca2-4d14-b3de-18ca34ccd277"
 
 [vars]
 CACHE_TTL = "3600"

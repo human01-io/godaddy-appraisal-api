@@ -47,7 +47,7 @@ npm run deploy
 ### Base URL
 
 ```
-https://domain-appraisal.<your-subdomain>.workers.dev
+https://gogreedy.phantom.mx
 ```
 
 ---
@@ -58,7 +58,7 @@ Health check and cache status.
 
 **Request:**
 ```bash
-curl https://your-worker.workers.dev/health
+curl https://gogreedy.phantom.mx/health
 ```
 
 **Response:**
@@ -108,10 +108,10 @@ Fetch appraisal value, availability, and alternative TLDs for a single domain.
 **Request:**
 ```bash
 # Default market (mx)
-curl https://your-worker.workers.dev/appraisal/phantom.com
+curl https://gogreedy.phantom.mx/appraisal/phantom.com
 
 # US market (USD pricing)
-curl https://your-worker.workers.dev/appraisal/phantom.com?market=us
+curl https://gogreedy.phantom.mx/appraisal/phantom.com?market=us
 ```
 
 **Response (200 OK):**
@@ -237,7 +237,7 @@ Appraise multiple domains sequentially (max 5 per request).
 
 **Request:**
 ```bash
-curl "https://your-worker.workers.dev/batch?domains=phantom.com,swif.com,yobot.com&market=us"
+curl "https://gogreedy.phantom.mx/batch?domains=phantom.com,swif.com,yobot.com&market=us"
 ```
 
 **Response (200 OK):**
@@ -271,7 +271,7 @@ curl "https://your-worker.workers.dev/batch?domains=phantom.com,swif.com,yobot.c
 
 ### `GET /` (root)
 
-Returns same response as `/health`.
+Serves the web UI for interactive domain appraisals.
 
 ### Any other path
 

@@ -4,8 +4,8 @@
 
 A Cloudflare Worker that scrapes GoDaddy's internal domain appraisal engine using headless Chromium (via CF Browser Rendering). Returns domain valuations, availability, comparable sales, and alternative TLD pricing through a REST API.
 
-**Production URL:** `https://gogreedy.alejandro-sarmiento-pa.workers.dev`
-**GitHub:** `https://github.com/human01-io/godaddy-appraisal-api` (private, account: human01-io)
+**Production URL:** `https://gogreedy.phantom.mx`
+**GitHub:** `https://github.com/human01-io/godaddy-appraisal-api`
 
 ## Architecture
 
@@ -57,17 +57,18 @@ Single file: `src/index.ts` (~910 lines). Contains everything:
 
 ## Availability Detection Logic
 
+All TLDs (priority + spins) are verified via exact lookups to get authoritative `ExactMatchDomain.IsAvailable`.
+
 ```
 Main domain (from exact):
   ExactMatchDomain.IsAvailable === true  →  available
   Fallback: ProductId > 0 && CurrentPriceDisplay !== ""  →  available
 
-Alternative TLDs (from priority exact calls):
+Alternative TLDs (all verified via exact lookups):
   _emd.IsAvailable === true  →  available (ExactMatchDomain attached as _emd)
-
-Alternative TLDs (from spins):
-  ProductId > 0 && CurrentPriceDisplay !== ""  →  available
 ```
+
+**WARNING:** The spins endpoint returns generic TLD pricing, NOT domain-specific availability. `ProductId > 0` just means the TLD exists as a product — a taken domain like `agents.com` still shows `ProductId: 101` with a registration price. Never trust spins for availability; always verify with exact lookups.
 
 **WARNING:** `CurrentPrice != null` is NOT a valid check — taken domains return `CurrentPrice: 0` (not null). Use `CurrentPriceDisplay !== ""` or `ProductId > 0`.
 

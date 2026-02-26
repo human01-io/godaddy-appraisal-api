@@ -30,6 +30,401 @@ const MARKETS: Record<string, { subdomain: string; market: string; currency: str
 
 const DEFAULT_MARKET = "mx";
 
+const HTML_UI = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Domain Appraisal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0a12;--bg2:#111119;--bg3:#191924;--border:#222233;
+  --text:#e8e8f0;--text2:#8888a0;--text3:#555568;
+  --accent:#10b981;--accent-bg:rgba(16,185,129,0.08);
+  --gold:#f59e0b;--gold-bg:rgba(245,158,11,0.08);
+  --indigo:#818cf8;--indigo-bg:rgba(129,140,248,0.08);
+  --red:#f87171;--green:#34d399;
+}
+html{font-size:16px}
+body{
+  font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);
+  min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+body::after{
+  content:'';position:fixed;top:-50%;left:-50%;right:-50%;bottom:-50%;
+  background:radial-gradient(ellipse at 50% 0%,rgba(99,102,241,0.07) 0%,transparent 60%),
+             radial-gradient(ellipse at 80% 50%,rgba(16,185,129,0.04) 0%,transparent 50%);
+  pointer-events:none;z-index:0;
+}
+#app{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 24px 60px}
+header{padding:32px 0 20px;display:flex;align-items:center}
+.logo{
+  font-size:0.78rem;font-weight:700;letter-spacing:0.12em;
+  color:var(--accent);text-transform:uppercase;
+}
+.logo span{color:var(--text3);font-weight:400;margin-left:4px}
+.hero-text{
+  text-align:center;font-size:2.6rem;font-weight:800;line-height:1.15;
+  letter-spacing:-0.03em;margin:40px 0 36px;
+  background:linear-gradient(135deg,var(--text) 0%,var(--text2) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.search-form{max-width:640px;margin:0 auto}
+.search-wrapper{
+  display:flex;gap:8px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:16px;padding:6px;transition:border-color 0.3s,box-shadow 0.3s;
+}
+.search-wrapper:focus-within{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-bg),0 8px 32px rgba(0,0,0,0.3);
+}
+.search-wrapper input{
+  flex:1;min-width:0;background:none;border:none;color:var(--text);
+  font-family:'JetBrains Mono',monospace;font-size:1.05rem;
+  padding:12px 16px;outline:none;
+}
+.search-wrapper input::placeholder{color:var(--text3)}
+.search-wrapper select{
+  background:var(--bg3);border:1px solid var(--border);border-radius:10px;
+  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
+  padding:8px 12px;cursor:pointer;outline:none;-webkit-appearance:none;
+}
+.search-wrapper button{
+  background:var(--accent);border:none;border-radius:10px;color:#000;
+  font-family:'Outfit',sans-serif;font-weight:600;font-size:0.9rem;
+  padding:12px 24px;cursor:pointer;display:flex;align-items:center;gap:6px;
+  transition:opacity 0.2s;white-space:nowrap;
+}
+.search-wrapper button:hover{opacity:0.85}
+.search-wrapper button:disabled{opacity:0.5;cursor:not-allowed}
+.search-wrapper button svg{width:16px;height:16px}
+.hidden{display:none!important}
+#loading{text-align:center;padding:80px 0}
+.loading-card{
+  display:inline-block;background:var(--bg2);border:1px solid var(--border);
+  border-radius:20px;padding:48px 64px;
+}
+.loading-spinner{
+  width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;margin:0 auto 24px;animation:spin 0.8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:1.1rem;font-weight:500;margin-bottom:8px}
+.loading-text span{font-family:'JetBrains Mono',monospace;color:var(--accent)}
+.loading-sub{color:var(--text3);font-size:0.85rem;margin-bottom:24px}
+.progress-bar{
+  width:220px;height:3px;background:var(--bg3);border-radius:2px;
+  margin:0 auto 12px;overflow:hidden;
+}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width 0.4s linear}
+.elapsed{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text3)}
+.error-card{
+  max-width:420px;margin:60px auto;background:var(--bg2);
+  border:1px solid rgba(248,113,113,0.2);border-radius:16px;padding:40px;text-align:center;
+}
+.error-icon{
+  width:48px;height:48px;line-height:48px;border-radius:50%;
+  background:rgba(248,113,113,0.1);color:var(--red);
+  font-size:1.4rem;font-weight:700;margin:0 auto 16px;
+}
+.error-text{color:var(--text2);margin-bottom:24px;font-size:0.95rem;word-break:break-word}
+.error-card button{
+  background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-family:'Outfit',sans-serif;font-size:0.85rem;
+  padding:10px 20px;cursor:pointer;transition:border-color 0.2s;
+}
+.error-card button:hover{border-color:var(--text3)}
+.result-hero{
+  background:var(--bg2);border:1px solid var(--border);border-radius:20px;
+  padding:40px;margin-top:48px;margin-bottom:24px;
+}
+.result-hero-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;gap:12px;flex-wrap:wrap}
+.result-domain{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:600}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:100px;
+  font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
+}
+.badge-available{background:rgba(52,211,153,0.1);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
+.badge-taken{background:rgba(248,113,113,0.1);color:var(--red);border:1px solid rgba(248,113,113,0.2)}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.govalue-label{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:8px}
+.govalue-amount{
+  font-family:'JetBrains Mono',monospace;font-size:3.2rem;font-weight:700;
+  color:var(--gold);line-height:1;
+}
+.govalue-reg{font-family:'JetBrains Mono',monospace;font-size:0.9rem;color:var(--text2);margin-top:10px}
+.govalue-reg s{color:var(--text3);margin-left:8px;font-size:0.85rem}
+.reasons{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px;padding-top:24px;border-top:1px solid var(--border)}
+.reason-tag{
+  display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;
+  background:var(--bg3);border:1px solid var(--border);font-size:0.8rem;color:var(--text2);
+}
+.reason-tag .ri{font-size:0.7rem;opacity:0.6}
+.section-title{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:16px}
+.tld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;margin-bottom:24px}
+.tld-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:16px;transition:border-color 0.2s,transform 0.2s;cursor:default;
+}
+.tld-card:hover{transform:translateY(-2px);border-color:var(--text3)}
+.tld-card.priority{border-color:rgba(129,140,248,0.3);background:var(--indigo-bg)}
+.tld-card.priority:hover{border-color:var(--indigo)}
+.tld-domain{
+  font-family:'JetBrains Mono',monospace;font-size:0.88rem;font-weight:500;
+  margin-bottom:8px;display:flex;align-items:center;gap:6px;
+}
+.tld-card.priority .tld-domain{color:var(--indigo)}
+.priority-star{font-size:0.6rem;color:var(--indigo)}
+.tld-price{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--text2);margin-bottom:4px}
+.tld-status{font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em}
+.tld-status.available{color:var(--green)}
+.tld-status.taken{color:var(--red)}
+.sales-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:40px}
+.sale-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;display:flex;justify-content:space-between;align-items:center;
+}
+.sale-domain{font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--text)}
+.sale-info{text-align:right}
+.sale-price{font-family:'JetBrains Mono',monospace;font-size:0.82rem;color:var(--gold);font-weight:500}
+.sale-year{font-size:0.7rem;color:var(--text3)}
+.footer{text-align:center;padding:40px 0 20px;color:var(--text3);font-size:0.75rem}
+.footer a{color:var(--text2);text-decoration:none}
+.footer a:hover{color:var(--accent)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.anim{animation:fadeUp 0.5s ease-out both}
+@media(max-width:640px){
+  .hero-text{font-size:1.7rem;margin:30px 0 28px}
+  .search-wrapper{flex-wrap:wrap}
+  .search-wrapper input{min-width:100%}
+  .search-wrapper select,.search-wrapper button{flex:1}
+  .govalue-amount{font-size:2.4rem}
+  .result-hero{padding:24px}
+  .tld-grid{grid-template-columns:repeat(2,1fr)}
+  .sales-grid{grid-template-columns:1fr}
+  .loading-card{padding:36px 28px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">DOMAIN APPRAISAL <span>API</span></div>
+  </header>
+
+  <h2 class="hero-text" id="heroText">Discover the value<br>of any domain</h2>
+
+  <form id="searchForm" class="search-form">
+    <div class="search-wrapper">
+      <input id="domainInput" type="text" placeholder="example.com" autocomplete="off" spellcheck="false" required>
+      <select id="marketSelect"></select>
+      <button type="submit" id="submitBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Appraise
+      </button>
+    </div>
+  </form>
+
+  <div id="loading" class="hidden">
+    <div class="loading-card">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Analyzing <span id="loadingDomain"></span></div>
+      <div class="loading-sub">This typically takes 5-10 seconds</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="elapsed" id="elapsed">0s</div>
+    </div>
+  </div>
+
+  <div id="error" class="hidden">
+    <div class="error-card">
+      <div class="error-icon">!</div>
+      <div class="error-text" id="errorText"></div>
+      <button onclick="document.getElementById('error').classList.add('hidden');document.getElementById('domainInput').focus()">Try Again</button>
+    </div>
+  </div>
+
+  <div id="results" class="hidden"></div>
+
+  <div class="footer">Powered by Cloudflare Workers + Browser Rendering</div>
+</div>
+
+<script>
+(function(){
+  var form=document.getElementById('searchForm');
+  var input=document.getElementById('domainInput');
+  var mktSel=document.getElementById('marketSelect');
+  var loadEl=document.getElementById('loading');
+  var resEl=document.getElementById('results');
+  var errEl=document.getElementById('error');
+  var btn=document.getElementById('submitBtn');
+  var timer=null;
+
+  var mkts=[
+    ['mx','MX - MXN'],['us','US - USD'],['uk','UK - GBP'],['ca','CA - CAD'],
+    ['au','AU - AUD'],['br','BR - BRL'],['de','DE - EUR'],['fr','FR - EUR'],
+    ['es','ES - EUR'],['it','IT - EUR'],['jp','JP - JPY'],['in','IN - INR'],
+    ['sg','SG - SGD'],['co','CO - COP'],['ar','AR - ARS'],['cl','CL - CLP']
+  ];
+  mkts.forEach(function(m){
+    var o=document.createElement('option');
+    o.value=m[0];o.textContent=m[1];
+    if(m[0]==='mx')o.selected=true;
+    mktSel.appendChild(o);
+  });
+
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    var d=input.value.trim().toLowerCase();
+    if(!d)return;
+    if(d.indexOf('.')===-1)d=d+'.com';
+    run(d,mktSel.value);
+  });
+
+  function run(domain,market){
+    errEl.classList.add('hidden');
+    resEl.classList.add('hidden');
+    loadEl.classList.remove('hidden');
+    btn.disabled=true;
+    document.getElementById('loadingDomain').textContent=domain;
+    var pf=document.getElementById('progressFill');
+    var el=document.getElementById('elapsed');
+    pf.style.width='0%';
+    var t0=Date.now();
+    clearInterval(timer);
+    timer=setInterval(function(){
+      var s=((Date.now()-t0)/1000)|0;
+      el.textContent=s+'s elapsed';
+      var pct=Math.min((Date.now()-t0)/12000*100,95);
+      pf.style.width=pct+'%';
+    },250);
+
+    fetch('/appraisal/'+encodeURIComponent(domain)+'?market='+market)
+      .then(function(r){return r.json()})
+      .then(function(data){
+        stop();
+        if(data.error){showErr(data.error)}
+        else{render(data)}
+      })
+      .catch(function(e){stop();showErr(e.message||'Network error')});
+  }
+
+  function stop(){clearInterval(timer);loadEl.classList.add('hidden');btn.disabled=false}
+  function showErr(msg){document.getElementById('errorText').textContent=msg;errEl.classList.remove('hidden')}
+
+  function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+  function fmtNum(n){return Number(n).toLocaleString()}
+
+  function render(d){
+    var pr=['mx','io','app','ai'];
+    var h='';
+
+    h+='<div class="result-hero anim">';
+    h+='<div class="result-hero-top"><div class="result-domain">'+esc(d.domain)+'</div>';
+    if(d.availability){
+      if(d.availability.available){
+        h+='<div class="badge badge-available"><span class="badge-dot"></span>Available</div>';
+      }else{
+        h+='<div class="badge badge-taken"><span class="badge-dot"></span>Taken</div>';
+      }
+    }
+    h+='</div>';
+
+    h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
+    h+='<div class="govalue-amount" id="goval" data-v="'+(d.govalue||0)+'">$0</div>';
+
+    if(d.availability&&d.availability.price_display){
+      h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display);
+      if(d.availability.list_price&&d.availability.list_price!==d.availability.price){
+        h+=' <s>'+esc(d.currency)+fmtNum(d.availability.list_price)+'</s>';
+      }
+      h+='</div>';
+    }
+
+    if(d.reasons&&d.reasons.length){
+      h+='<div class="reasons">';
+      d.reasons.forEach(function(r){
+        h+='<div class="reason-tag"><span class="ri">'+rIcon(r.type)+'</span> '+esc(rText(r))+'</div>';
+      });
+      h+='</div>';
+    }
+    h+='</div>';
+
+    if(d.alternative_tlds&&d.alternative_tlds.length){
+      h+='<div class="anim" style="animation-delay:0.1s">';
+      h+='<div class="section-title">Alternative TLDs</div><div class="tld-grid">';
+      d.alternative_tlds.forEach(function(t){
+        var ip=pr.indexOf(t.tld)!==-1;
+        h+='<div class="tld-card'+(ip?' priority':'')+'">';
+        h+='<div class="tld-domain">'+esc(t.domain)+(ip?' <span class="priority-star">&#9733;</span>':'')+'</div>';
+        if(t.price_display)h+='<div class="tld-price">'+esc(t.price_display)+'</div>';
+        h+='<div class="tld-status '+(t.available?'available':'taken')+'">'+(t.available?'Available':'Taken')+'</div>';
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+
+    if(d.comparable_sales&&d.comparable_sales.length){
+      h+='<div class="anim" style="animation-delay:0.2s">';
+      h+='<div class="section-title">Comparable Sales</div><div class="sales-grid">';
+      d.comparable_sales.forEach(function(s){
+        h+='<div class="sale-card"><div class="sale-domain">'+esc(s.domain)+'</div>';
+        h+='<div class="sale-info"><div class="sale-price">$'+fmtNum(s.price)+'</div>';
+        h+='<div class="sale-year">'+s.year+'</div></div></div>';
+      });
+      h+='</div></div>';
+    }
+
+    resEl.innerHTML=h;
+    resEl.classList.remove('hidden');
+    resEl.scrollIntoView({behavior:'smooth',block:'start'});
+
+    var gEl=document.getElementById('goval');
+    if(gEl){countUp(gEl,0,parseInt(gEl.getAttribute('data-v'))||0,1200)}
+  }
+
+  function countUp(el,from,to,dur){
+    var t0=null;
+    function step(ts){
+      if(!t0)t0=ts;
+      var p=Math.min((ts-t0)/dur,1);
+      var e=1-Math.pow(1-p,3);
+      el.textContent='$'+Math.floor(from+(to-from)*e).toLocaleString();
+      if(p<1)requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function rText(r){
+    switch(r.type){
+      case 'memorable':return 'Memorable name';
+      case 'broad_appeal':return 'Broad commercial appeal';
+      case 'other_extension_sold_high':return esc(r.domain)+' sold for $'+fmtNum(r.price);
+      case 'great_extension':return 'Premium extension';
+      case 'short':return 'Short & concise';
+      case 'valuable_keyword':return '"'+r.keyword+'" keyword (avg $'+fmtNum(r.avg_sold_price)+')';
+      case 'popular_keyword':return '"'+r.keyword+'" is popular';
+      default:return r.type.replace(/_/g,' ');
+    }
+  }
+  function rIcon(t){
+    switch(t){
+      case 'memorable':return '&#9830;';case 'broad_appeal':return '&#9733;';
+      case 'other_extension_sold_high':return '&#36;';case 'great_extension':return '&#9733;';
+      case 'short':return '&#8596;';case 'valuable_keyword':return '&#9670;';
+      case 'popular_keyword':return '&#8593;';default:return '&#8226;';
+    }
+  }
+
+  input.focus();
+})();
+</script>
+</body>
+</html>`;
+
 // Comprehensive stealth patches to bypass Akamai bot detection
 const STEALTH_SCRIPT = `
   // 1. Hide webdriver flag (primary detection signal)
@@ -167,44 +562,60 @@ async function fetchAppraisal(
     const vp = viewports[Math.floor(Math.random() * viewports.length)];
     await page.setViewport(vp);
 
+    // Block heavy resources but keep JS (needed for Akamai challenge)
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const resourceType = req.resourceType();
+      const reqUrl = req.url();
+      if (
+        resourceType === "image" ||
+        resourceType === "font" ||
+        resourceType === "media" ||
+        reqUrl.includes("google-analytics") ||
+        reqUrl.includes("googletagmanager") ||
+        reqUrl.includes("facebook.net") ||
+        reqUrl.includes("doubleclick.net") ||
+        reqUrl.includes("hotjar") ||
+        reqUrl.includes("optimizely") ||
+        reqUrl.includes("nr-data.net")
+      ) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
     // Set market cookies so GoDaddy returns region-specific TLD suggestions
     await page.setCookie(
       { name: "market", value: mkt.market, domain: ".godaddy.com" },
       { name: "currency", value: mkt.currency, domain: ".godaddy.com" },
     );
 
-    // Intercept the appraisal API response from the page
+    // Navigate to GoDaddy appraisal page — domcontentloaded is enough to establish session
     let apiData: { status: number; body: any } | null = null;
-    const apiPromise = new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 25000);
-      page.on("response", async (response) => {
-        if (response.url().includes("api.godaddy.com/v1/appraisal/")) {
-          try {
-            const body = await response.json();
-            apiData = { status: response.status(), body };
-          } catch {
-            apiData = { status: response.status(), body: null };
-          }
-          clearTimeout(timeout);
-          resolve();
+
+    // Set up response interception to catch the appraisal call if the page makes it
+    page.on("response", async (response) => {
+      if (response.url().includes("api.godaddy.com/v1/appraisal/")) {
+        try {
+          const body = await response.json();
+          apiData = { status: response.status(), body };
+        } catch {
+          apiData = { status: response.status(), body: null };
         }
-      });
+      }
     });
 
-    // Navigate to GoDaddy appraisal page using the selected market subdomain
     const targetUrl = `https://${mkt.subdomain}.godaddy.com/domain-value-appraisal/appraisal/?domainToCheck=${encodeURIComponent(domain)}`;
-    await page.goto(targetUrl, { waitUntil: "networkidle0", timeout: 30000 }).catch(() => {
-      // networkidle0 may timeout on heavy pages — that's ok
-    });
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
 
-    // Extra wait if needed
+    // If the page already fired the API call during load, use it
+    // Otherwise, make the call directly from browser context (uses page's Akamai cookies)
     if (!apiData) {
-      await new Promise((r) => setTimeout(r, 5000));
+      // Brief wait for any in-flight appraisal call
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
-    await apiPromise;
-
-    // Fallback: fetch appraisal directly from page context
     if (!apiData) {
       try {
         const direct = await page.evaluate(async (d: string) => {
@@ -244,72 +655,56 @@ async function fetchAppraisal(
     }
 
     // Appraisal succeeded — now fetch availability + alternative TLDs
-    // from the page context (uses the browser's cookies/session)
+    // All calls run in parallel for speed
     const searchResults = await page.evaluate(`
       (async () => {
-        const domain = ${JSON.stringify(domain)};
-        const host = window.location.origin;
-        const results = { exact: null, spins: null, host: host, errors: [] };
+        var domain = ${JSON.stringify(domain)};
+        var host = window.location.origin;
+        var results = { exact: null, spins: null, priority: [], errors: [] };
 
-        async function doFetch(url) {
-          const r = await fetch(url, {
+        function doFetch(url) {
+          return fetch(url, {
             headers: { "Accept": "application/json" },
             credentials: "include",
+          }).then(function(r) {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.json();
           });
-          if (!r.ok) throw new Error(r.status + " " + r.statusText);
-          return await r.json();
         }
 
-        const hosts = [host];
-        if (host !== "https://www.godaddy.com") hosts.push("https://www.godaddy.com");
-
+        var h = host;
         var sld = domain.split(".")[0];
         var priorityTlds = ["mx", "io", "app", "ai"];
 
-        for (const h of hosts) {
-          try {
-            if (!results.exact) {
-              results.exact = await doFetch(
-                h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(domain)
-              );
+        // Fire exact + spins in parallel
+        var settled = await Promise.allSettled([
+          doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(domain)),
+          doFetch(h + "/domainfind/v1/search/spins?key=appraisals_search&q=" + encodeURIComponent(domain) + "&pagesize=20&tlds=mx,io,app,ai,com,net,org,co,dev,xyz,shop,store")
+        ]);
+
+        if (settled[0].status === "fulfilled") results.exact = settled[0].value;
+        else results.errors.push("exact: " + settled[0].reason);
+        if (settled[1].status === "fulfilled") results.spins = settled[1].value;
+        else results.errors.push("spins: " + settled[1].reason);
+
+        // Find which priority TLDs are missing from spins, then fetch them in parallel
+        var spinsHasTld = {};
+        if (results.spins && results.spins.Products) {
+          results.spins.Products.forEach(function(p) { spinsHasTld[p.Tld] = true; });
+        }
+        var missingTlds = priorityTlds.filter(function(t) { return !spinsHasTld[t]; });
+
+        if (missingTlds.length > 0) {
+          var pSettled = await Promise.allSettled(
+            missingTlds.map(function(tld) {
+              return doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(sld + "." + tld));
+            })
+          );
+          pSettled.forEach(function(r) {
+            if (r.status === "fulfilled" && r.value && r.value.Products && r.value.Products.length > 0) {
+              results.priority.push(r.value.Products[0]);
             }
-          } catch (e) {
-            results.errors.push("exact@" + h + ": " + e.message);
-          }
-
-          try {
-            if (!results.spins) {
-              results.spins = await doFetch(
-                h + "/domainfind/v1/search/spins?key=appraisals_search&q=" + encodeURIComponent(domain) + "&pagesize=20&tlds=mx,io,app,ai,com,net,org,co,dev,xyz,shop,store"
-              );
-            }
-          } catch (e) {
-            results.errors.push("spins@" + h + ": " + e.message);
-          }
-
-          // Explicitly check each priority TLD that's missing from spins
-          if (!results.priority) results.priority = [];
-          var spinsHasTld = {};
-          if (results.spins && results.spins.Products) {
-            results.spins.Products.forEach(function(p) { spinsHasTld[p.Tld] = true; });
-          }
-
-          for (var i = 0; i < priorityTlds.length; i++) {
-            var tld = priorityTlds[i];
-            if (spinsHasTld[tld]) continue;
-            try {
-              var priorityResult = await doFetch(
-                h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(sld + "." + tld)
-              );
-              if (priorityResult && priorityResult.Products && priorityResult.Products.length > 0) {
-                results.priority.push(priorityResult.Products[0]);
-              }
-            } catch (e) {
-              results.errors.push("priority_" + tld + "@" + h + ": " + e.message);
-            }
-          }
-
-          if (results.exact && results.spins) break;
+          });
         }
 
         return results;
@@ -410,8 +805,15 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // Serve UI
+    if (path === "/") {
+      return new Response(HTML_UI, {
+        headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders },
+      });
+    }
+
     // Health check
-    if (path === "/" || path === "/health") {
+    if (path === "/health") {
       return Response.json(
         {
           status: "ok",

@@ -159,6 +159,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 }
 .govalue-reg{font-family:'JetBrains Mono',monospace;font-size:0.9rem;color:var(--text2);margin-top:10px}
 .govalue-reg s{color:var(--text3);margin-left:8px;font-size:0.85rem}
+.govalue-reg.premium-price{color:#fbbf24;font-size:1.1rem;font-weight:600}
 .reasons{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px;padding-top:24px;border-top:1px solid var(--border)}
 .reason-tag{
   display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;
@@ -327,10 +328,10 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     h+='<div class="result-hero anim">';
     h+='<div class="result-hero-top"><div class="result-domain">'+esc(d.domain)+'</div>';
     if(d.availability){
-      if(d.availability.available){
+      if(d.availability.available && d.availability.is_premium){
+        h+='<div class="badge badge-aftermarket"><span class="badge-dot"></span>Premium</div>';
+      }else if(d.availability.available){
         h+='<div class="badge badge-available"><span class="badge-dot"></span>Available</div>';
-      }else if(d.availability.buyable){
-        h+='<div class="badge badge-aftermarket"><span class="badge-dot"></span>Aftermarket</div>';
       }else{
         h+='<div class="badge badge-taken"><span class="badge-dot"></span>Taken</div>';
       }
@@ -340,12 +341,21 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
     h+='<div class="govalue-amount" id="goval" data-v="'+(d.govalue||0)+'">$0</div>';
 
-    if(d.availability&&d.availability.price_display){
-      h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display);
-      if(d.availability.list_price&&d.availability.list_price!==d.availability.price){
-        h+=' <s>'+esc(d.currency)+fmtNum(d.availability.list_price)+'</s>';
+    if(d.availability&&d.availability.price){
+      var cur=d.availability.currency||d.currency||'';
+      var priceStr=cur+fmtNum(d.availability.price);
+      if(d.availability.is_premium){
+        h+='<div class="govalue-reg premium-price">Purchase: '+esc(priceStr)+'</div>';
+        if(d.availability.renewal_display){
+          h+='<div class="govalue-reg">Renewal: '+esc(d.availability.renewal_display)+'/yr</div>';
+        }
+      }else{
+        h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display||priceStr);
+        if(d.availability.list_price&&d.availability.list_price!==d.availability.price){
+          h+=' <s>'+esc(cur)+fmtNum(d.availability.list_price)+'</s>';
+        }
+        h+='</div>';
       }
-      h+='</div>';
     }
 
     if(d.reasons&&d.reasons.length){
@@ -655,7 +665,7 @@ async function fetchAppraisal(
     }
 
     // Appraisal succeeded — now fetch availability + alternative TLDs
-    // All calls run in parallel for speed
+    // Use key=dpp (domain purchase page) which returns availability + premium/aftermarket data
     const searchResults = await page.evaluate(`
       (async () => {
         var domain = ${JSON.stringify(domain)};
@@ -676,16 +686,19 @@ async function fetchAppraisal(
         var sld = domain.split(".")[0];
         var priorityTlds = ["mx", "io", "app", "ai"];
 
-        // Fire exact + spins in parallel
+        // Fire exact + spins + availability API in parallel
         var settled = await Promise.allSettled([
-          doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(domain)),
-          doFetch(h + "/domainfind/v1/search/spins?key=appraisals_search&q=" + encodeURIComponent(domain) + "&pagesize=20&tlds=mx,io,app,ai,com,net,org,co,dev,xyz,shop,store")
+          doFetch(h + "/domainfind/v1/search/exact?key=dpp&q=" + encodeURIComponent(domain)),
+          doFetch(h + "/domainfind/v1/search/spins?key=dpp&q=" + encodeURIComponent(domain) + "&pagesize=20&tlds=mx,io,app,ai,com,net,org,co,dev,xyz,shop,store"),
+          doFetch("https://api.godaddy.com/v1/domains/available?domain=" + encodeURIComponent(domain) + "&checkType=FULL&forTransfer=false")
         ]);
 
         if (settled[0].status === "fulfilled") results.exact = settled[0].value;
         else results.errors.push("exact: " + settled[0].reason);
         if (settled[1].status === "fulfilled") results.spins = settled[1].value;
         else results.errors.push("spins: " + settled[1].reason);
+        if (settled[2].status === "fulfilled") results.domainAvail = settled[2].value;
+        else results.errors.push("avail: " + settled[2].reason);
 
         // Find which priority TLDs are missing from spins, then fetch them in parallel
         var spinsHasTld = {};
@@ -697,7 +710,7 @@ async function fetchAppraisal(
         if (missingTlds.length > 0) {
           var pSettled = await Promise.allSettled(
             missingTlds.map(function(tld) {
-              return doFetch(h + "/domainfind/v1/search/exact?key=appraisals_search&q=" + encodeURIComponent(sld + "." + tld));
+              return doFetch(h + "/domainfind/v1/search/exact?key=dpp&q=" + encodeURIComponent(sld + "." + tld));
             })
           );
           pSettled.forEach(function(r) {
@@ -720,18 +733,33 @@ async function fetchAppraisal(
     // Build enriched result
     const result: any = { ...apiData.body, market: marketKey, currency: mkt.currency };
 
-    if (searchExact?.Products?.[0]) {
+    // Use official /v1/domains/available API for accurate availability + premium data
+    const domainAvail = searchResults?.domainAvail;
+    if (domainAvail) {
+      result.availability = {
+        available: domainAvail.available === true,
+        domain: domainAvail.domain ?? domain,
+        purchase_type: domainAvail.purchaseType ?? null,
+        price: domainAvail.price ?? null,
+        currency: domainAvail.currency ?? mkt.currency,
+        is_premium: (domainAvail.purchaseType === "AFTERMARKET" || domainAvail.purchaseType === "PREMIUM") || false,
+      };
+      // Add renewal price from domainfind if available
+      if (searchExact?.Products?.[0]?.PriceInfo) {
+        const pi = searchExact.Products[0].PriceInfo;
+        result.availability.renewal_price = pi.RenewalPrice ?? null;
+        result.availability.renewal_display = pi.RenewalPriceDisplay ?? null;
+      }
+    } else if (searchExact?.Products?.[0]) {
+      // Fallback to domainfind data
       const p = searchExact.Products[0];
       result.availability = {
         available: p.Available === true,
-        buyable: p.Buyable === true,
         purchase_type: p.PurchaseType ?? null,
-        tld: p.Tld,
         price: p.PriceInfo?.CurrentPrice ?? null,
         price_display: p.PriceInfo?.CurrentPriceDisplay ?? null,
         list_price: p.PriceInfo?.ListPrice ?? null,
-        is_promo: p.PriceInfo?.IsPromoDiscount ?? false,
-        icann_fee: p.HasIcannFee ?? false,
+        is_premium: false,
       };
     }
 

@@ -609,13 +609,7 @@ async function fetchAppraisal(
     const targetUrl = `https://${mkt.subdomain}.godaddy.com/domain-value-appraisal/appraisal/?domainToCheck=${encodeURIComponent(domain)}`;
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
 
-    // If the page already fired the API call during load, use it
-    // Otherwise, make the call directly from browser context (uses page's Akamai cookies)
-    if (!apiData) {
-      // Brief wait for any in-flight appraisal call
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
+    // If page's own JS already made the appraisal call, use it; otherwise fetch directly
     if (!apiData) {
       try {
         const direct = await page.evaluate(async (d: string) => {
@@ -710,6 +704,9 @@ async function fetchAppraisal(
         return results;
       })()
     `) as any;
+
+    // Stop all page activity immediately — we have everything we need
+    await page.evaluate("window.stop()").catch(() => {});
 
     const searchExact = searchResults?.exact;
     const searchSpins = searchResults?.spins;
@@ -841,21 +838,14 @@ export default {
         );
       }
 
-      // Retry up to 2 times on rate limit
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const result = await fetchAppraisal(env, domain, market);
-          return Response.json(result, { headers: corsHeaders });
-        } catch (err: any) {
-          if (err.message === "RATE_LIMITED" && attempt < 1) {
-            await new Promise((r) => setTimeout(r, 3000));
-            continue;
-          }
-          return Response.json(
-            { error: err.message || "Failed to fetch appraisal" },
-            { status: 502, headers: corsHeaders }
-          );
-        }
+      try {
+        const result = await fetchAppraisal(env, domain, market);
+        return Response.json(result, { headers: corsHeaders });
+      } catch (err: any) {
+        return Response.json(
+          { error: err.message || "Failed to fetch appraisal" },
+          { status: 502, headers: corsHeaders }
+        );
       }
     }
 

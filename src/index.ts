@@ -49,6 +49,12 @@ const MARKETS: Record<string, { subdomain: string; market: string; currency: str
 
 const DEFAULT_MARKET = "mx";
 
+// Feature flag: GoDaddy appraisal scraping (headless browser + GoValue).
+// When false, no browser is launched — responses contain availability +
+// pricing only (RDAP + Cloudflare wholesale prices). Flip to true to
+// re-enable appraisals.
+const APPRAISAL_ENABLED: boolean = false;
+
 const BASE_PRIORITY_TLDS = ["ai", "io", "dev", "app", "co"];
 
 // ISO country code → market key
@@ -85,17 +91,24 @@ async function loadRdapBootstrap(): Promise<Record<string, string>> {
   if (rdapBootstrap && Date.now() - rdapBootstrapTs < 86400000) {
     return rdapBootstrap;
   }
-  const resp = await fetch("https://data.iana.org/rdap/dns.json");
-  const data = await resp.json() as { services: [string[], string[]][] };
-  const map: Record<string, string> = {};
-  for (const [tlds, urls] of data.services) {
-    for (const tld of tlds) {
-      map[tld.toLowerCase()] = urls[0];
+  try {
+    const resp = await fetch("https://data.iana.org/rdap/dns.json");
+    if (!resp.ok) throw new Error(`RDAP bootstrap ${resp.status}`);
+    const data = await resp.json() as { services: [string[], string[]][] };
+    const map: Record<string, string> = {};
+    for (const [tlds, urls] of data.services) {
+      for (const tld of tlds) {
+        map[tld.toLowerCase()] = urls[0];
+      }
     }
+    rdapBootstrap = map;
+    rdapBootstrapTs = Date.now();
+    return map;
+  } catch (err) {
+    // Fall back to stale bootstrap if refresh fails; only die with nothing cached
+    if (rdapBootstrap) return rdapBootstrap;
+    throw err;
   }
-  rdapBootstrap = map;
-  rdapBootstrapTs = Date.now();
-  return map;
 }
 
 async function checkRdap(domain: string, bootstrap: Record<string, string>): Promise<boolean | null> {
@@ -224,6 +237,87 @@ const STEALTH_SCRIPT = `
   // 13. Prevent detection via stack traces
   Error.prepareStackTrace = undefined;
 `;
+
+// Build the alternative_tlds list from RDAP results + Cloudflare pricing
+function buildAlternatives(
+  sld: string,
+  altTlds: string[],
+  prioTlds: string[],
+  rdapAvail: Record<string, boolean | null>,
+  cfTldPrices: Record<string, { registration: number; renewal: number }>,
+) {
+  const mapped = altTlds.map((tld) => {
+    const rdap = rdapAvail[tld];
+    const cf = cfTldPrices[tld];
+    // RDAP is authoritative; if null (unknown TLD), fall back to unavailable
+    const available = rdap === true;
+    return {
+      domain: `${sld}.${tld}`,
+      tld,
+      available,
+      price: cf?.registration ?? null,
+      price_display: cf ? `$${cf.registration.toFixed(2)}` : null,
+      renewal_price: cf?.renewal ?? null,
+    };
+  });
+
+  // Sort: priority TLDs first (in order), then the rest
+  mapped.sort((a, b) => {
+    const aIdx = prioTlds.indexOf(a.tld);
+    const bIdx = prioTlds.indexOf(b.tld);
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+    if (aIdx !== -1) return -1;
+    if (bIdx !== -1) return 1;
+    return 0;
+  });
+
+  return mapped;
+}
+
+// Availability-only lookup: RDAP + Cloudflare wholesale pricing.
+// No browser, no GoDaddy — fast and free of appraisal rate limits.
+async function fetchAvailability(
+  env: Env,
+  domain: string,
+  marketKey: string = DEFAULT_MARKET,
+): Promise<any> {
+  const prioTlds = priorityTldsForMarket(marketKey);
+  const sld = domain.split(".")[0];
+  const queriedTld = domain.includes(".") ? domain.split(".").slice(1).join(".") : "";
+  const altTlds = [...new Set([...prioTlds, ...ALL_ALT_TLDS])].filter(t => t !== queriedTld);
+
+  const cacheTtl = parseInt(env.CACHE_TTL || "3600");
+  const cacheKey = `${domain}:${marketKey}`;
+  const mkt = MARKETS[marketKey] || MARKETS[DEFAULT_MARKET];
+
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < cacheTtl * 1000) {
+    return { ...cached.data, _cached: true };
+  }
+
+  const allRdapTlds = queriedTld ? [queriedTld, ...altTlds] : altTlds;
+  const [rdapAvail, cfTldPrices] = await Promise.all([
+    checkAllRdap(sld, allRdapTlds),
+    getCfPrices(),
+  ]);
+
+  const result: any = { domain, market: marketKey, currency: mkt.currency };
+
+  const rdapMain = queriedTld ? rdapAvail[queriedTld] : null;
+  const cfMain = queriedTld ? cfTldPrices[queriedTld] : null;
+  result.availability = {
+    available: rdapMain === true,
+    tld: queriedTld || null,
+    price: cfMain?.registration ?? null,
+    price_display: cfMain ? `$${cfMain.registration.toFixed(2)}` : null,
+    renewal_price: cfMain?.renewal ?? null,
+  };
+
+  result.alternative_tlds = buildAlternatives(sld, altTlds, prioTlds, rdapAvail, cfTldPrices);
+
+  cache.set(cacheKey, { data: result, ts: Date.now() });
+  return result;
+}
 
 async function fetchAppraisal(
   env: Env,
@@ -424,35 +518,7 @@ async function fetchAppraisal(
     }
 
     // Build alternatives using Cloudflare wholesale pricing
-    {
-      const mapped = altTlds.map((tld) => {
-        const rdap = rdapAvail[tld];
-        const cf = cfTldPrices[tld];
-        // RDAP is authoritative; if null (unknown TLD), fall back to unavailable
-        const available = rdap === true;
-        return {
-          domain: `${sld}.${tld}`,
-          tld,
-          available,
-          price: cf?.registration ?? null,
-          price_display: cf ? `$${cf.registration.toFixed(2)}` : null,
-          renewal_price: cf?.renewal ?? null,
-        };
-      });
-
-      // Sort: priority TLDs first (in order), then the rest
-      const priorityTldOrder = prioTlds;
-      mapped.sort((a, b) => {
-        const aIdx = priorityTldOrder.indexOf(a.tld);
-        const bIdx = priorityTldOrder.indexOf(b.tld);
-        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-        if (aIdx !== -1) return -1;
-        if (bIdx !== -1) return 1;
-        return 0;
-      });
-
-      result.alternative_tlds = mapped;
-    }
+    result.alternative_tlds = buildAlternatives(sld, altTlds, prioTlds, rdapAvail, cfTldPrices);
 
     cache.set(cacheKey, { data: result, ts: Date.now() });
     return result;
@@ -496,6 +562,7 @@ export default {
       return Response.json(
         {
           status: "ok",
+          appraisal_enabled: APPRAISAL_ENABLED,
           cache_size: cache.size,
           default_market: DEFAULT_MARKET,
           available_markets: Object.keys(MARKETS),
@@ -521,7 +588,9 @@ export default {
       }
 
       try {
-        const result = await fetchAppraisal(env, domain, market);
+        const result = APPRAISAL_ENABLED
+          ? await fetchAppraisal(env, domain, market)
+          : await fetchAvailability(env, domain, market);
         if (!result._cached) {
           const bestAlt = result.alternative_tlds?.find((t: any) => t.available && t.price_display);
           const altsJson = result.alternative_tlds?.length
@@ -574,7 +643,9 @@ export default {
       const results: Record<string, any> = {};
       for (const domain of domains) {
         try {
-          results[domain] = await fetchAppraisal(env, domain, market);
+          results[domain] = APPRAISAL_ENABLED
+            ? await fetchAppraisal(env, domain, market)
+            : await fetchAvailability(env, domain, market);
         } catch (err: any) {
           results[domain] = { error: err.message };
         }

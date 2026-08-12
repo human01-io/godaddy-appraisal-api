@@ -237,7 +237,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 
   <div class="layout">
     <div class="col-main">
-      <h2 class="hero-text" id="heroText">Discover the value<br>of any domain</h2>
+      <h2 class="hero-text" id="heroText">Find available domains<br>in seconds</h2>
 
       <form id="searchForm" class="search-form">
         <div class="search-wrapper">
@@ -245,7 +245,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
           <select id="marketSelect"></select>
           <button type="submit" id="submitBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            Appraise
+            Search
           </button>
         </div>
       </form>
@@ -253,8 +253,8 @@ header{padding:32px 0 20px;display:flex;align-items:center}
       <div id="loading" class="hidden">
         <div class="loading-card">
           <div class="loading-spinner"></div>
-          <div class="loading-text">Analyzing <span id="loadingDomain"></span></div>
-          <div class="loading-sub">This typically takes 5-10 seconds</div>
+          <div class="loading-text">Checking <span id="loadingDomain"></span></div>
+          <div class="loading-sub">Checking availability across TLDs</div>
           <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
           <div class="elapsed" id="elapsed">0s</div>
         </div>
@@ -328,7 +328,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     timer=setInterval(function(){
       var s=((Date.now()-t0)/1000)|0;
       el.textContent=s+'s elapsed';
-      var pct=Math.min((Date.now()-t0)/12000*100,95);
+      var pct=Math.min((Date.now()-t0)/4000*100,95);
       pf.style.width=pct+'%';
     },250);
 
@@ -363,11 +363,18 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     }
     h+='</div>';
 
-    h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
-    h+='<div class="govalue-amount" id="goval" data-v="'+(d.govalue||0)+'">$0</div>';
-
-    if(d.availability&&d.availability.price_display){
-      h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display)+'</div>';
+    if(d.govalue){
+      h+='<div class="govalue-label">Estimated Value (GoValue)</div>';
+      h+='<div class="govalue-amount" id="goval" data-v="'+d.govalue+'">$0</div>';
+      if(d.availability&&d.availability.price_display){
+        h+='<div class="govalue-reg">Registration: '+esc(d.availability.price_display)+'</div>';
+      }
+    }else if(d.availability&&d.availability.price_display){
+      h+='<div class="govalue-label">Registration Price</div>';
+      h+='<div class="govalue-amount" style="color:var(--green)">'+esc(d.availability.price_display)+'</div>';
+      if(d.availability.renewal_price!=null){
+        h+='<div class="govalue-reg">Renewal: $'+Number(d.availability.renewal_price).toFixed(2)+'/yr</div>';
+      }
     }
 
     if(d.reasons&&d.reasons.length){

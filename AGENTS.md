@@ -7,6 +7,10 @@ A Cloudflare Worker that scrapes GoDaddy's internal domain appraisal engine usin
 **Production URL:** `https://gogreedy.phantom.mx`
 **GitHub:** `https://github.com/human01-io/godaddy-appraisal-api`
 
+## Current State: Appraisal Disabled
+
+The GoDaddy appraisal scrape is **disabled** via `APPRAISAL_ENABLED = false` in `src/index.ts`. Requests go through `fetchAvailability()` instead of `fetchAppraisal()`: RDAP availability + Cloudflare wholesale pricing only, no browser launch, no GoDaddy calls. Responses omit `govalue`, `comparable_sales`, and `reasons`; the UI hides the GoValue block when `govalue` is absent. All browser/stealth/appraisal code is intact — flip the flag to `true` to restore the old behavior. The sections below describe the full (appraisal-enabled) flow.
+
 ## Architecture
 
 Single file: `src/index.ts` (~910 lines). Contains everything:

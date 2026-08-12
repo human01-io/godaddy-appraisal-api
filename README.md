@@ -4,11 +4,13 @@ A Cloudflare Worker that wraps GoDaddy's internal domain appraisal engine, retur
 
 Built on [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) with stealth patches to bypass Akamai bot detection.
 
+> **Note:** The GoDaddy appraisal (GoValue) is currently **disabled** via the `APPRAISAL_ENABLED` flag in `src/index.ts`. The API returns domain availability (RDAP) and Cloudflare wholesale pricing only — no browser is launched, so responses are fast and there are no GoDaddy rate limits. Flip the flag to `true` to re-enable appraisals; `govalue`, `comparable_sales`, and `reasons` will be absent from responses while it is off.
+
 ## Features
 
-- Domain appraisal value (GoDaddy GoValue)
-- Comparable domain sales data
-- Domain availability and pricing
+- Domain appraisal value (GoDaddy GoValue) — *currently disabled, see note above*
+- Comparable domain sales data — *currently disabled, see note above*
+- Domain availability (RDAP) and Cloudflare wholesale pricing
 - Alternative TLD suggestions (`.mx`, `.io`, `.app`, `.ai` prioritized)
 - 16 market/locale options with localized pricing
 - In-memory caching per isolate
@@ -65,6 +67,7 @@ curl https://gogreedy.phantom.mx/health
 ```json
 {
   "status": "ok",
+  "appraisal_enabled": false,
   "cache_size": 3,
   "default_market": "mx",
   "available_markets": ["us", "mx", "uk", "ca", "au", "in", "br", "es", "de", "fr", "it", "jp", "sg", "co", "ar", "cl"]

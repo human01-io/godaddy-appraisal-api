@@ -139,6 +139,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
 }
 .reason-tag .ri{font-size:0.7rem;opacity:0.6}
 .section-title{font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px}
+.section-count{font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--text3);opacity:0.7}
 .tld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;margin-bottom:20px}
 .tld-card{
   background:var(--bg2);border:1px solid var(--border);border-radius:12px;
@@ -254,7 +255,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
         <div class="loading-card">
           <div class="loading-spinner"></div>
           <div class="loading-text">Checking <span id="loadingDomain"></span></div>
-          <div class="loading-sub">Checking availability across TLDs</div>
+          <div class="loading-sub">Checking availability across 400+ TLDs</div>
           <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
           <div class="elapsed" id="elapsed">0s</div>
         </div>
@@ -328,7 +329,7 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     timer=setInterval(function(){
       var s=((Date.now()-t0)/1000)|0;
       el.textContent=s+'s elapsed';
-      var pct=Math.min((Date.now()-t0)/4000*100,95);
+      var pct=Math.min((Date.now()-t0)/12000*100,95);
       pf.style.width=pct+'%';
     },250);
 
@@ -387,14 +388,19 @@ header{padding:32px 0 20px;display:flex;align-items:center}
     h+='</div>';
 
     if(d.alternative_tlds&&d.alternative_tlds.length){
+      var avail=d.alternative_tlds.filter(function(t){return t.available});
+      // Show every available TLD; taken ones only if they're priority TLDs
+      var shown=d.alternative_tlds.filter(function(t){return t.available||pr.indexOf(t.tld)!==-1});
       h+='<div class="anim" style="animation-delay:0.1s">';
-      h+='<div class="section-title">Alternative TLDs</div><div class="tld-grid">';
-      d.alternative_tlds.forEach(function(t){
+      h+='<div class="section-title">Available TLDs <span class="section-count">'+avail.length+' of '+d.alternative_tlds.length+' checked</span></div><div class="tld-grid">';
+      shown.forEach(function(t){
         var ip=pr.indexOf(t.tld)!==-1;
         h+='<div class="tld-card'+(ip?' priority':'')+'">';
         h+='<div class="tld-domain">'+esc(t.domain)+(ip?' <span class="priority-star">&#9733;</span>':'')+'</div>';
         if(t.price_display)h+='<div class="tld-price">'+esc(t.price_display)+'</div>';
-        h+='<div class="tld-status '+(t.available?'available':'taken')+'">'+(t.available?'Available':'Taken')+'</div>';
+        var st=t.available?'available':(t.status==='unknown'?'aftermarket':'taken');
+        var lbl=t.available?'Available':(t.status==='unknown'?'Unknown':'Taken');
+        h+='<div class="tld-status '+st+'">'+lbl+'</div>';
         h+='</div>';
       });
       h+='</div></div>';

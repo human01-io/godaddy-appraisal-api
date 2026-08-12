@@ -11,7 +11,7 @@ Built on [Cloudflare Browser Rendering](https://developers.cloudflare.com/browse
 - Domain appraisal value (GoDaddy GoValue) — *currently disabled, see note above*
 - Comparable domain sales data — *currently disabled, see note above*
 - Domain availability (RDAP) and Cloudflare wholesale pricing
-- Alternative TLD suggestions (`.mx`, `.io`, `.app`, `.ai` prioritized)
+- Availability across every TLD in the Cloudflare pricing feed (~420), with `.mx`, `.io`, `.app`, `.ai` prioritized
 - 16 market/locale options with localized pricing
 - In-memory caching per isolate
 - CORS enabled

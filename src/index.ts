@@ -5,6 +5,9 @@ interface Env {
   BROWSER: Fetcher;
   CACHE_TTL: string;
   DB: D1Database;
+  // Self service binding — used to fan out RDAP checks across multiple
+  // invocations, since each request is capped at 50 subrequests
+  SELF?: Fetcher;
 }
 
 // In-memory cache (per isolate, resets on cold start)
@@ -76,7 +79,9 @@ function priorityTldsForMarket(market: string): string[] {
   return [...BASE_PRIORITY_TLDS, ctld];
 }
 
-// All alternative TLDs we check availability for
+// Popular alternative TLDs — used as the pool for /batch (a full sweep per
+// domain would exceed the Workers subrequest cap) and as a floor for the
+// full sweep in case the pricing feed is unavailable.
 const ALL_ALT_TLDS = [
   "com", "net", "org", "ai", "io", "dev", "app", "co",
   "xyz", "shop", "store", "tech", "online", "site", "info",
@@ -119,6 +124,7 @@ async function checkRdap(domain: string, bootstrap: Record<string, string>): Pro
     const resp = await fetch(url, {
       headers: { Accept: "application/rdap+json" },
       redirect: "follow",
+      signal: AbortSignal.timeout(8000),
     });
     if (resp.status === 200) return false; // exists = taken
     if (resp.status === 404) return true;  // not found = available
@@ -134,10 +140,38 @@ async function checkAllRdap(
 ): Promise<Record<string, boolean | null>> {
   const bootstrap = await loadRdapBootstrap();
   const results: Record<string, boolean | null> = {};
+  const run = async (tld: string) => {
+    results[tld] = await checkRdap(`${sld}.${tld}`, bootstrap);
+  };
+  await Promise.allSettled(tlds.map(run));
+  // One retry pass for transient failures (timeouts, registry rate limits).
+  // TLDs with no RDAP server can never resolve — don't waste subrequests.
+  // Caps keep the worst case under the per-invocation subrequest budget.
+  const failed = tlds
+    .filter((t) => results[t] === null && bootstrap[t.split(".").pop()!])
+    .slice(0, 12);
+  if (failed.length) {
+    await Promise.allSettled(failed.map(run));
+  }
+  // DNS-over-HTTPS fallback for TLDs whose RDAP is missing or unreachable
+  // (.io/.us/.mx have no bootstrap entry; some registries reject requests
+  // from Workers). NS records prove taken; NXDOMAIN implies available.
+  const unresolved = tlds.filter((t) => results[t] === null).slice(0, 12);
   await Promise.allSettled(
-    tlds.map(async (tld) => {
-      const available = await checkRdap(`${sld}.${tld}`, bootstrap);
-      results[tld] = available;
+    unresolved.map(async (tld) => {
+      try {
+        const resp = await fetch(
+          `https://cloudflare-dns.com/dns-query?name=${sld}.${tld}&type=NS`,
+          {
+            headers: { Accept: "application/dns-json" },
+            signal: AbortSignal.timeout(4000),
+          },
+        );
+        if (!resp.ok) return;
+        const data = await resp.json() as any;
+        if (data.Answer?.some((a: any) => a.type === 2)) results[tld] = false;
+        else if (data.Status === 3) results[tld] = true;
+      } catch { /* keep unknown */ }
     }),
   );
   return results;
@@ -255,20 +289,28 @@ function buildAlternatives(
       domain: `${sld}.${tld}`,
       tld,
       available,
+      status: rdap === true ? "available" : rdap === false ? "taken" : "unknown",
       price: cf?.registration ?? null,
       price_display: cf ? `$${cf.registration.toFixed(2)}` : null,
       renewal_price: cf?.renewal ?? null,
     };
   });
 
-  // Sort: priority TLDs first (in order), then the rest
+  // Sort: priority TLDs first (in order), then available cheapest-first,
+  // then taken/unknown alphabetically
   mapped.sort((a, b) => {
     const aIdx = prioTlds.indexOf(a.tld);
     const bIdx = prioTlds.indexOf(b.tld);
     if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
     if (aIdx !== -1) return -1;
     if (bIdx !== -1) return 1;
-    return 0;
+    if (a.available !== b.available) return a.available ? -1 : 1;
+    if (a.available) {
+      const ap = a.price ?? Infinity;
+      const bp = b.price ?? Infinity;
+      if (ap !== bp) return ap - bp;
+    }
+    return a.tld.localeCompare(b.tld);
   });
 
   return mapped;
@@ -280,14 +322,14 @@ async function fetchAvailability(
   env: Env,
   domain: string,
   marketKey: string = DEFAULT_MARKET,
+  tldPool: "full" | "popular" = "full",
 ): Promise<any> {
   const prioTlds = priorityTldsForMarket(marketKey);
   const sld = domain.split(".")[0];
   const queriedTld = domain.includes(".") ? domain.split(".").slice(1).join(".") : "";
-  const altTlds = [...new Set([...prioTlds, ...ALL_ALT_TLDS])].filter(t => t !== queriedTld);
 
   const cacheTtl = parseInt(env.CACHE_TTL || "3600");
-  const cacheKey = `${domain}:${marketKey}`;
+  const cacheKey = `${domain}:${marketKey}:${tldPool}`;
   const mkt = MARKETS[marketKey] || MARKETS[DEFAULT_MARKET];
 
   const cached = cache.get(cacheKey);
@@ -295,11 +337,39 @@ async function fetchAvailability(
     return { ...cached.data, _cached: true };
   }
 
+  // "full" sweeps every TLD in the Cloudflare pricing feed; "popular" keeps
+  // the small list (used by /batch, which must stay under the subrequest cap)
+  const cfTldPrices = await getCfPrices();
+  const poolTlds = tldPool === "full"
+    ? [...ALL_ALT_TLDS, ...Object.keys(cfTldPrices)]
+    : ALL_ALT_TLDS;
+  const altTlds = [...new Set([...prioTlds, ...poolTlds])].filter(t => t !== queriedTld);
+
   const allRdapTlds = queriedTld ? [queriedTld, ...altTlds] : altTlds;
-  const [rdapAvail, cfTldPrices] = await Promise.all([
-    checkAllRdap(sld, allRdapTlds),
-    getCfPrices(),
-  ]);
+
+  // The full sweep (~420 TLDs) far exceeds the 50-subrequest cap of a single
+  // invocation, so fan out in ~40-TLD chunks through the SELF service
+  // binding — each child invocation gets its own subrequest budget.
+  const CHUNK = 20;
+  let rdapAvail: Record<string, boolean | null>;
+  if (allRdapTlds.length > CHUNK && env.SELF) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < allRdapTlds.length; i += CHUNK) {
+      chunks.push(allRdapTlds.slice(i, i + CHUNK));
+    }
+    const parts = await Promise.all(chunks.map(async (chunk) => {
+      try {
+        const resp = await env.SELF!.fetch(
+          `https://self/rdap-batch?sld=${encodeURIComponent(sld)}&tlds=${encodeURIComponent(chunk.join(","))}`
+        );
+        if (resp.ok) return await resp.json() as Record<string, boolean | null>;
+      } catch { /* fall through to unknown */ }
+      return Object.fromEntries(chunk.map((t) => [t, null]));
+    }));
+    rdapAvail = Object.assign({}, ...parts);
+  } else {
+    rdapAvail = await checkAllRdap(sld, allRdapTlds);
+  }
 
   const result: any = { domain, market: marketKey, currency: mkt.currency };
 
@@ -307,6 +377,7 @@ async function fetchAvailability(
   const cfMain = queriedTld ? cfTldPrices[queriedTld] : null;
   result.availability = {
     available: rdapMain === true,
+    status: rdapMain === true ? "available" : rdapMain === false ? "taken" : "unknown",
     tld: queriedTld || null,
     price: cfMain?.registration ?? null,
     price_display: cfMain ? `$${cfMain.registration.toFixed(2)}` : null,
@@ -314,6 +385,8 @@ async function fetchAvailability(
   };
 
   result.alternative_tlds = buildAlternatives(sld, altTlds, prioTlds, rdapAvail, cfTldPrices);
+  result.available_tld_count = result.alternative_tlds.filter((t: any) => t.available).length
+    + (result.availability.available ? 1 : 0);
 
   cache.set(cacheKey, { data: result, ts: Date.now() });
   return result;
@@ -571,6 +644,26 @@ export default {
       );
     }
 
+    // Internal fan-out endpoint: RDAP-check a chunk of TLDs for one SLD.
+    // Called by fetchAvailability via the SELF binding so the full sweep
+    // stays under the per-invocation subrequest cap.
+    if (path === "/rdap-batch") {
+      const sld = (url.searchParams.get("sld") || "").toLowerCase().trim();
+      const tlds = (url.searchParams.get("tlds") || "")
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, 45);
+      if (!sld || !tlds.length) {
+        return Response.json(
+          { error: "sld and tlds required" },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+      const results = await checkAllRdap(sld, tlds);
+      return Response.json(results, { headers: corsHeaders });
+    }
+
     // Parse market from query string (default: mx)
     const marketParam = (url.searchParams.get("market") || DEFAULT_MARKET).toLowerCase();
     const market = MARKETS[marketParam] ? marketParam : DEFAULT_MARKET;
@@ -593,9 +686,12 @@ export default {
           : await fetchAvailability(env, domain, market);
         if (!result._cached) {
           const bestAlt = result.alternative_tlds?.find((t: any) => t.available && t.price_display);
-          const altsJson = result.alternative_tlds?.length
-            ? JSON.stringify(result.alternative_tlds.map((t: any) => ({
-                d: t.domain, t: t.tld, a: t.available ? 1 : 0,
+          // Store only available alternatives (capped) — the full sweep
+          // returns ~400 entries, too much to keep per history row
+          const availAlts = (result.alternative_tlds || []).filter((t: any) => t.available).slice(0, 40);
+          const altsJson = availAlts.length
+            ? JSON.stringify(availAlts.map((t: any) => ({
+                d: t.domain, t: t.tld, a: 1,
                 p: t.price_display || null,
               })))
             : null;
@@ -645,7 +741,7 @@ export default {
         try {
           results[domain] = APPRAISAL_ENABLED
             ? await fetchAppraisal(env, domain, market)
-            : await fetchAvailability(env, domain, market);
+            : await fetchAvailability(env, domain, market, "popular");
         } catch (err: any) {
           results[domain] = { error: err.message };
         }

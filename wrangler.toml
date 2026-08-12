@@ -10,6 +10,10 @@ routes = [
 [browser]
 binding = "BROWSER"
 
+[[services]]
+binding = "SELF"
+service = "gogreedy"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "gogreedy-history"

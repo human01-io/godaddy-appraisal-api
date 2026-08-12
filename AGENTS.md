@@ -11,6 +11,8 @@ A Cloudflare Worker that scrapes GoDaddy's internal domain appraisal engine usin
 
 The GoDaddy appraisal scrape is **disabled** via `APPRAISAL_ENABLED = false` in `src/index.ts`. Requests go through `fetchAvailability()` instead of `fetchAppraisal()`: RDAP availability + Cloudflare wholesale pricing only, no browser launch, no GoDaddy calls. Responses omit `govalue`, `comparable_sales`, and `reasons`; the UI hides the GoValue block when `govalue` is absent. All browser/stealth/appraisal code is intact — flip the flag to `true` to restore the old behavior. The sections below describe the full (appraisal-enabled) flow.
 
+Availability mode sweeps **every TLD in the Cloudflare pricing feed (~420)**, not just the popular list. Since a single Worker invocation is capped at 50 subrequests, `fetchAvailability()` fans out through the `SELF` service binding (`wrangler.toml`) — 20-TLD chunks hit the internal `/rdap-batch` route, each chunk getting its own subrequest budget. Failed RDAP checks are retried once, then fall back to a DNS-over-HTTPS NS lookup (NS records ⇒ taken, NXDOMAIN ⇒ available) which covers TLDs with no RDAP server (.io, .us, .mx family) and registries that reject Workers egress (CentralNic, Google Registry, GoDaddy Registry). Entries carry `status: available | taken | unknown`; `/batch` keeps the small `ALL_ALT_TLDS` pool to stay under the cap. Full sweep takes ~8-10s.
+
 ## Architecture
 
 Single file: `src/index.ts` (~910 lines). Contains everything:

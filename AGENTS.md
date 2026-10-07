@@ -15,7 +15,7 @@ Availability mode sweeps **every TLD in the Cloudflare pricing feed (~420)**, no
 
 ## Architecture
 
-Single file: `src/index.ts` (~910 lines). Contains everything:
+Single file: `src/index.ts`. Contains everything:
 - `HTML_UI` — inline HTML/CSS/JS for the web UI served at `/`
 - `STEALTH_SCRIPT` — 13 patches to bypass Akamai bot detection in headless Chrome
 - `fetchAppraisal()` — core function: launches browser, navigates, intercepts APIs, returns enriched data
@@ -109,14 +109,13 @@ Each appraisal takes ~7-10 seconds of browser time. Free plan ≈ 40-60 appraisa
 
 ### API Key Quirk
 - `key=appraisals_search` is the only working key for domainfind endpoints
-- The comment in code says "Use key=dpp" — this is WRONG/outdated, `dpp` returns 404
 - `/v1/domains/available` (official GoDaddy API) requires auth — can't use from browser context
 
 ## File Structure
 
 ```
 cf-worker/
-├── src/index.ts      # Everything — UI, stealth, scraping, routes (~910 lines)
+├── src/index.ts      # Everything — UI, stealth, scraping, routes
 ├── wrangler.toml     # Worker config, Browser binding, CACHE_TTL env var
 ├── package.json      # @cloudflare/puppeteer + wrangler
 ├── tsconfig.json     # ESNext, bundler resolution, strict
